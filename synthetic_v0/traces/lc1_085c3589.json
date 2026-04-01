@@ -1,0 +1,355 @@
+{
+  "trace_id": "lc1_085c3589",
+  "dataset_version": "0.1.0",
+  "source_type": "synthetic",
+  "workload_family": "long_chat",
+  "language": "en",
+  "tokenizer": {
+    "name": "cl100k_base",
+    "version": "1.0"
+  },
+  "session": {
+    "session_id": "sess-e4b91c02-7d3f-4a1e-b8e5-19f3a0c7d412",
+    "goal": "Debug a subtle Python type error through multi-turn reasoning",
+    "contains_tools": false,
+    "contains_rag": false,
+    "contains_branching": false,
+    "contains_multimodal": false
+  },
+  "turns": [
+    {
+      "turn_id": 1,
+      "parent_turn_id": null,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "I've got a really annoying bug. My FastAPI endpoint returns 422 on some requests but not others. Here's the model and the route:\n\n```python\nfrom pydantic import BaseModel\nfrom typing import Optional, List\nfrom datetime import datetime\n\nclass InferenceRequest(BaseModel):\n    model_id: str\n    prompt: str\n    max_tokens: int = 512\n    temperature: float = 0.7\n    stop_sequences: Optional[List[str]] = None\n    metadata: Optional[dict] = None\n    request_time: Optional[datetime] = None\n    priority: int | None = None\n    stream: bool = False\n    top_k: int = 50\n    top_p: float = 0.95\n    repeat_penalty: float = 1.1\n\n@app.post(\"/v1/inference\")\nasync def run_inference(req: InferenceRequest):\n    engine = get_engine(req.model_id)\n    result = await engine.generate(\n        prompt=req.prompt,\n        max_tokens=req.max_tokens,\n        temperature=req.temperature,\n        stop=req.stop_sequences or [],\n        top_k=req.top_k,\n        top_p=req.top_p,\n    )\n    return {\"output\": result.text, \"usage\": result.usage}\n```\n\nThe failing request body looks like this (from our logs):\n```json\n{\"model_id\": \"kimi-k2.5\", \"prompt\": \"Explain the architecture of NVIDIA Dynamo\", \"max_tokens\": 1024, \"temperature\": 0.8, \"priority\": \"high\", \"metadata\": {\"team\": \"infra\", \"ticket\": \"ISB-4421\"}, \"request_time\": \"2026-03-30T14:22:00\"}\n```\n\nThe passing request is basically the same but without priority. What's going on?",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        }
+      ],
+      "timestamp": "2026-03-31T09:14:22.000Z",
+      "input_tokens": 312,
+      "output_tokens": 0,
+      "cumulative_tokens": 312
+    },
+    {
+      "turn_id": 2,
+      "parent_turn_id": 1,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "The issue is the `priority` field. You've declared it as `int | None = None`, but the failing request sends `\"priority\": \"high\"` — a string, not an integer.\n\nPydantic v2 will reject this because `\"high\"` cannot be coerced to `int`. The passing request omits `priority` entirely, so it defaults to `None` and validation succeeds.\n\nYou have a type mismatch between your API contract and what your callers are sending. A few options:\n\n1. **Change the type to accept both:** Use `Union[int, str, None]` or an enum\n2. **Fix the caller** to send an integer priority (e.g., `1`, `2`, `3`)\n3. **Use an enum** if priority has fixed levels:",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        },
+        {
+          "type": "code",
+          "text": "from enum import Enum\n\nclass Priority(str, Enum):\n    LOW = \"low\"\n    MEDIUM = \"medium\"\n    HIGH = \"high\"\n    CRITICAL = \"critical\"\n\nclass InferenceRequest(BaseModel):\n    # ... other fields ...\n    priority: Optional[Priority] = None",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {
+            "language": "python"
+          }
+        }
+      ],
+      "timestamp": "2026-03-31T09:14:28.000Z",
+      "input_tokens": 0,
+      "output_tokens": 198,
+      "cumulative_tokens": 510
+    },
+    {
+      "turn_id": 3,
+      "parent_turn_id": 2,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "ok wait but that's not the only issue. I just checked and we also get 422s on requests that DO send an int for priority. Here's another failing one from the logs:\n\n```json\n{\"model_id\": \"kimi-k2.5\", \"prompt\": \"Write a Redis caching layer for KV cache metadata\", \"max_tokens\": 2048, \"temperature\": 1, \"priority\": 2, \"stop_sequences\": \"\\n\\n\", \"metadata\": {\"team\": \"infra\"}, \"request_time\": \"not sure lol\"}\n```\n\nthis also 422s. and actually now im not even sure the first one was the priority thing because i looked at the 422 detail and it says something about multiple fields",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        }
+      ],
+      "timestamp": "2026-03-31T09:15:41.000Z",
+      "input_tokens": 155,
+      "output_tokens": 0,
+      "cumulative_tokens": 665
+    },
+    {
+      "turn_id": 4,
+      "parent_turn_id": 3,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "Now I can see multiple validation errors in that second request. Let me break it down field by field:\n\n**1. `stop_sequences`: expects `List[str]`, got `str`**\nYou sent `\"stop_sequences\": \"\\n\\n\"` — a bare string. Your model declares `Optional[List[str]]`. Pydantic v2 does NOT auto-wrap a string into a list. This will fail.\n\n**2. `request_time`: expects `datetime`, got unparseable string**\nYou sent `\"request_time\": \"not sure lol\"`. Your model declares `Optional[datetime]`. Pydantic will try to parse this as ISO 8601 and fail.\n\n**3. `temperature`: `1` is valid** — `int` coerces to `float` in Pydantic v2, so this one is fine.\n\n**4. `priority`: `2` is valid** — matches `int | None`.\n\nSo the 422 on this request is caused by `stop_sequences` and `request_time`, not `priority`.\n\nFor the first request you showed, you had two issues:\n- `priority: \"high\"` (string vs int)\n- `request_time: \"2026-03-30T14:22:00\"` — this one actually IS valid ISO 8601, so it should parse fine\n\nSo the first request's 422 is indeed just the priority field.\n\nThe core problem is that your API contract isn't documented or enforced at the caller level, so different clients send different types for the same fields. Let me show you a more defensive model:",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        },
+        {
+          "type": "code",
+          "text": "from pydantic import BaseModel, field_validator\nfrom typing import Optional, List, Union\nfrom datetime import datetime\n\nclass Priority(str, Enum):\n    LOW = \"low\"\n    MEDIUM = \"medium\"\n    HIGH = \"high\"\n    CRITICAL = \"critical\"\n\nclass InferenceRequest(BaseModel):\n    model_id: str\n    prompt: str\n    max_tokens: int = 512\n    temperature: float = 0.7\n    stop_sequences: Optional[List[str]] = None\n    metadata: Optional[dict] = None\n    request_time: Optional[datetime] = None\n    priority: Optional[Union[int, Priority]] = None\n    stream: bool = False\n    top_k: int = 50\n    top_p: float = 0.95\n    repeat_penalty: float = 1.1\n\n    @field_validator('stop_sequences', mode='before')\n    @classmethod\n    def wrap_single_stop(cls, v):\n        if isinstance(v, str):\n            return [v]\n        return v\n\n    @field_validator('request_time', mode='before')\n    @classmethod\n    def parse_request_time(cls, v):\n        if isinstance(v, str):\n            try:\n                return datetime.fromisoformat(v)\n            except ValueError:\n                return None\n        return v",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {
+            "language": "python"
+          }
+        },
+        {
+          "type": "text",
+          "text": "The `stop_sequences` validator auto-wraps a bare string into a list. The `request_time` validator falls back to `None` on unparseable strings instead of raising. Whether you want that permissiveness depends on your use case — silently dropping bad timestamps might hide bugs.",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        }
+      ],
+      "timestamp": "2026-03-31T09:15:52.000Z",
+      "input_tokens": 0,
+      "output_tokens": 487,
+      "cumulative_tokens": 1152
+    },
+    {
+      "turn_id": 5,
+      "parent_turn_id": 4,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "ok that makes sense. but actually i just realized there's a deeper issue. we have a middleware that injects fields into the request body before it hits the pydantic model. let me show you:\n\n```python\n@app.middleware(\"http\")\nasync def inject_metadata(request: Request, call_next):\n    if request.url.path == \"/v1/inference\":\n        body = await request.body()\n        data = json.loads(body)\n        \n        # inject tracing\n        data[\"metadata\"] = data.get(\"metadata\", {})\n        data[\"metadata\"][\"trace_id\"] = str(uuid.uuid4())\n        data[\"metadata\"][\"received_at\"] = datetime.now().isoformat()\n        \n        # inject priority from header if not in body\n        if \"priority\" not in data:\n            priority_header = request.headers.get(\"X-Priority\")\n            if priority_header:\n                data[\"priority\"] = priority_header  # BUG: this is always a string!\n        \n        # reconstruct request\n        request._body = json.dumps(data).encode()\n    \n    response = await call_next(request)\n    return response\n```\n\nso even when the client sends a correct int priority, if they ALSO send an X-Priority header and DON'T include priority in the body, the middleware injects it as a string. and our load balancer sets X-Priority on every request based on the tier.\n\ni think this might be the real source of most of the 422s we're seeing in prod. the direct API callers send correct types but the LB-routed traffic always has X-Priority: high or X-Priority: low as a header",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        }
+      ],
+      "timestamp": "2026-03-31T09:17:03.000Z",
+      "input_tokens": 278,
+      "output_tokens": 0,
+      "cumulative_tokens": 1430
+    },
+    {
+      "turn_id": 6,
+      "parent_turn_id": 5,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "That's a significant find. Your middleware has two bugs:\n\n**Bug 1: String injection for priority**\n`request.headers.get(\"X-Priority\")` always returns a string. When you inject `data[\"priority\"] = priority_header`, you're putting `\"high\"` or `\"low\"` into the body, which then fails `int | None` validation.\n\n**Bug 2: `request._body` mutation is unreliable**\nSetting `request._body` directly is an internal Starlette implementation detail. It works in some versions but can break silently on upgrades. The body stream may have already been consumed, and the reconstructed body might not be read by the route handler depending on how Starlette handles the stream internally.\n\nHere's what I'd recommend:\n\n**For Bug 1**, convert the header value in the middleware:",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        },
+        {
+          "type": "code",
+          "text": "# Option A: Map string priorities to ints\nPRIORITY_MAP = {\"low\": 1, \"medium\": 2, \"high\": 3, \"critical\": 4}\n\nif \"priority\" not in data:\n    priority_header = request.headers.get(\"X-Priority\", \"\").lower()\n    if priority_header in PRIORITY_MAP:\n        data[\"priority\"] = PRIORITY_MAP[priority_header]",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {
+            "language": "python"
+          }
+        },
+        {
+          "type": "text",
+          "text": "**For Bug 2**, instead of mutating `request._body`, use a dependency injection pattern:",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        },
+        {
+          "type": "code",
+          "text": "from fastapi import Depends\n\nasync def parse_inference_request(request: Request) -> InferenceRequest:\n    body = await request.json()\n    \n    # inject tracing\n    body.setdefault(\"metadata\", {})\n    body[\"metadata\"][\"trace_id\"] = str(uuid.uuid4())\n    body[\"metadata\"][\"received_at\"] = datetime.now().isoformat()\n    \n    # inject priority from header\n    if \"priority\" not in body:\n        priority_header = request.headers.get(\"X-Priority\", \"\").lower()\n        if priority_header in PRIORITY_MAP:\n            body[\"priority\"] = PRIORITY_MAP[priority_header]\n    \n    return InferenceRequest(**body)\n\n@app.post(\"/v1/inference\")\nasync def run_inference(req: InferenceRequest = Depends(parse_inference_request)):\n    engine = get_engine(req.model_id)\n    result = await engine.generate(\n        prompt=req.prompt,\n        max_tokens=req.max_tokens,\n        temperature=req.temperature,\n        stop=req.stop_sequences or [],\n        top_k=req.top_k,\n        top_p=req.top_p,\n    )\n    return {\"output\": result.text, \"usage\": result.usage}",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {
+            "language": "python"
+          }
+        },
+        {
+          "type": "text",
+          "text": "This approach is cleaner — no monkey-patching internals, explicit control over the parsing pipeline, and the type conversion happens before Pydantic sees the data.\n\nThe fact that your LB always sets `X-Priority` explains why LB-routed traffic consistently 422s while direct callers work fine. This is a classic middleware type-laundering bug — the header is always a string, but your model expects an int.",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        }
+      ],
+      "timestamp": "2026-03-31T09:17:18.000Z",
+      "input_tokens": 0,
+      "output_tokens": 498,
+      "cumulative_tokens": 1928
+    },
+    {
+      "turn_id": 7,
+      "parent_turn_id": 6,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "wait actually going back to what you said about the request._body thing being unreliable. we've been using that pattern for like 8 months with no issues. are you sure that's actually a problem? i don't want to refactor the middleware unless it's actually broken\n\nalso I just checked our error rate dashboard and we're seeing about 12% 422 rate on /v1/inference since we added the X-Priority header to the LB config 3 weeks ago. before that it was like 0.3%. so timing matches perfectly",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        }
+      ],
+      "timestamp": "2026-03-31T09:19:15.000Z",
+      "input_tokens": 124,
+      "output_tokens": 0,
+      "cumulative_tokens": 2052
+    },
+    {
+      "turn_id": 8,
+      "parent_turn_id": 7,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "Fair point on `request._body`. If it's worked for 8 months, it's stable enough for your Starlette version. It IS an undocumented internal, so it could break on a major upgrade, but \"refactor working code because it might break someday\" isn't a great reason to change it now. I'd note it as tech debt but not block on it.\n\nThe 12% → 0.3% correlation with the LB config change is strong evidence. That's your smoking gun. The fix is straightforward — you just need to convert the string header to an int in the middleware:\n\n```python\n# In your existing middleware, just change this part:\nif \"priority\" not in data:\n    priority_header = request.headers.get(\"X-Priority\")\n    if priority_header:\n        PRIORITY_MAP = {\"low\": 1, \"medium\": 2, \"high\": 3, \"critical\": 4}\n        mapped = PRIORITY_MAP.get(priority_header.lower())\n        if mapped is not None:\n            data[\"priority\"] = mapped\n        # else: don't inject an invalid priority, let it default to None\n```\n\nThis is a one-line-ish fix in your existing middleware. No need to refactor to the dependency injection pattern unless you want to.\n\nThe remaining 0.3% baseline 422 rate is probably the other issues we identified — callers sending `stop_sequences` as a bare string, malformed `request_time` values, etc. You could add the `field_validator` fixes from earlier to catch those, or investigate the logs to see what's actually causing them.\n\nShould I also look at whether the `priority` field should be an enum everywhere (model + middleware + LB config) to prevent this class of bug from recurring?",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        }
+      ],
+      "timestamp": "2026-03-31T09:19:28.000Z",
+      "input_tokens": 0,
+      "output_tokens": 312,
+      "cumulative_tokens": 2364
+    },
+    {
+      "turn_id": 9,
+      "parent_turn_id": 8,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "yeah let's make priority an enum. but here's the thing — we have 3 other services that also accept priority as int. the batch scheduler, the model router, and the quota service. they all talk to each other over gRPC and the proto has priority as int32. so if i change it to an enum in the FastAPI service I need to make sure the gRPC<->REST translation layer still works\n\nhere's the relevant proto:\n\n```protobuf\nmessage InferenceJob {\n  string model_id = 1;\n  string prompt = 2;\n  int32 max_tokens = 3;\n  float temperature = 4;\n  int32 priority = 5;  // 1=low, 2=medium, 3=high, 4=critical\n  map<string, string> metadata = 6;\n  repeated string stop_sequences = 7;\n}\n```\n\nand the translation layer:\n\n```python\ndef grpc_job_to_rest(job: InferenceJob) -> dict:\n    return {\n        \"model_id\": job.model_id,\n        \"prompt\": job.prompt,\n        \"max_tokens\": job.max_tokens,\n        \"temperature\": job.temperature,\n        \"priority\": job.priority,  # int32 from proto\n        \"metadata\": dict(job.metadata),\n        \"stop_sequences\": list(job.stop_sequences),\n    }\n\ndef rest_to_grpc_job(data: dict) -> InferenceJob:\n    job = InferenceJob()\n    job.model_id = data[\"model_id\"]\n    job.prompt = data[\"prompt\"]\n    job.max_tokens = data.get(\"max_tokens\", 512)\n    job.temperature = data.get(\"temperature\", 0.7)\n    job.priority = data.get(\"priority\", 0)\n    job.metadata.update(data.get(\"metadata\", {}))\n    job.stop_sequences.extend(data.get(\"stop_sequences\", []))\n    return job\n```\n\nif i make priority an enum on the REST side, the grpc->rest path will send an int which should still work if i do the union thing. but the rest->grpc path needs to convert the enum back to int. ugh this is getting complicated",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        }
+      ],
+      "timestamp": "2026-03-31T09:21:45.000Z",
+      "input_tokens": 378,
+      "output_tokens": 0,
+      "cumulative_tokens": 2742
+    },
+    {
+      "turn_id": 10,
+      "parent_turn_id": 9,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "This is actually simpler than it feels. You want `Priority` to be an `IntEnum` — that way it's simultaneously a valid int AND a named enum. The proto path keeps working because `IntEnum` members are literally ints:\n",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        },
+        {
+          "type": "code",
+          "text": "from enum import IntEnum\nfrom typing import Optional, Union\nfrom pydantic import field_validator\n\nclass Priority(IntEnum):\n    LOW = 1\n    MEDIUM = 2\n    HIGH = 3\n    CRITICAL = 4\n\n# String-to-int mapping for the LB header / legacy callers\n_PRIORITY_NAMES = {p.name.lower(): p for p in Priority}\n\nclass InferenceRequest(BaseModel):\n    # ... other fields ...\n    priority: Optional[Priority] = None\n\n    @field_validator('priority', mode='before')\n    @classmethod\n    def coerce_priority(cls, v):\n        if v is None:\n            return None\n        if isinstance(v, int):\n            return Priority(v)  # raises ValueError if not 1-4\n        if isinstance(v, str):\n            lowered = v.lower()\n            if lowered in _PRIORITY_NAMES:\n                return _PRIORITY_NAMES[lowered]\n            # try parsing as int string: \"3\" -> 3\n            try:\n                return Priority(int(lowered))\n            except (ValueError, KeyError):\n                pass\n        raise ValueError(f\"Invalid priority: {v!r}. Use 1-4 or low/medium/high/critical\")",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {
+            "language": "python"
+          }
+        },
+        {
+          "type": "text",
+          "text": "Now for your translation layer — since `Priority` IS an int, the gRPC path barely changes:\n",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        },
+        {
+          "type": "code",
+          "text": "def grpc_job_to_rest(job: InferenceJob) -> dict:\n    return {\n        \"model_id\": job.model_id,\n        \"prompt\": job.prompt,\n        \"max_tokens\": job.max_tokens,\n        \"temperature\": job.temperature,\n        \"priority\": job.priority,  # int32 from proto — still works, validator coerces to Priority\n        \"metadata\": dict(job.metadata),\n        \"stop_sequences\": list(job.stop_sequences),\n    }\n\ndef rest_to_grpc_job(data: dict) -> InferenceJob:\n    job = InferenceJob()\n    job.model_id = data[\"model_id\"]\n    job.prompt = data[\"prompt\"]\n    job.max_tokens = data.get(\"max_tokens\", 512)\n    job.temperature = data.get(\"temperature\", 0.7)\n    priority = data.get(\"priority\", 0)\n    job.priority = int(priority) if priority else 0  # IntEnum -> int is a no-op, but explicit\n    job.metadata.update(data.get(\"metadata\", {}))\n    job.stop_sequences.extend(data.get(\"stop_sequences\", []))\n    return job",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {
+            "language": "python"
+          }
+        },
+        {
+          "type": "text",
+          "text": "`int(Priority.HIGH)` returns `3`. So the proto field gets the int it expects, the REST API accepts both `\"high\"` and `3`, and your middleware header injection just works with the validator doing the coercion.\n\nThe middleware fix also becomes simpler — you don't even need the `PRIORITY_MAP` anymore, just inject the raw header string and let the Pydantic validator handle it:\n\n```python\nif \"priority\" not in data:\n    priority_header = request.headers.get(\"X-Priority\")\n    if priority_header:\n        data[\"priority\"] = priority_header  # validator will coerce \"high\" -> Priority.HIGH\n```\n\nThe original \"bug\" line is now correct because the validator handles string-to-enum coercion.",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        }
+      ],
+      "timestamp": "2026-03-31T09:22:02.000Z",
+      "input_tokens": 0,
+      "output_tokens": 572,
+      "cumulative_tokens": 3314
+    },
+    {
+      "turn_id": 11,
+      "parent_turn_id": 10,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "oh IntEnum, that's clean. i was overcomplicating this with Union types.\n\none more thing though. going back to the stop_sequences issue you mentioned in turn 3 or 4 — the bare string thing. I looked at the callers and our python SDK actually has a bug where it serializes stop_sequences wrong when there's only one:\n\n```python\n# from our SDK client\nclass InferenceClient:\n    def create_request(self, prompt, stop=None, **kwargs):\n        payload = {\"model_id\": self.model_id, \"prompt\": prompt}\n        if stop is not None:\n            if len(stop) == 1:\n                payload[\"stop_sequences\"] = stop[0]  # BUG: should be [stop[0]]\n            else:\n                payload[\"stop_sequences\"] = stop\n        payload.update(kwargs)\n        return self._post(\"/v1/inference\", json=payload)\n```\n\nso the SDK sends a bare string when there's exactly one stop sequence. this has probably been broken forever but nobody noticed because most people don't use stop sequences, and the ones that do usually pass multiple.\n\nso the field_validator you showed me earlier for wrapping single strings — that's actually fixing a real SDK bug downstream. should i fix it in both places? the SDK fix is obviously correct but we can't force everyone to upgrade immediately",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        }
+      ],
+      "timestamp": "2026-03-31T09:24:10.000Z",
+      "input_tokens": 247,
+      "output_tokens": 0,
+      "cumulative_tokens": 3561
+    },
+    {
+      "turn_id": 12,
+      "parent_turn_id": 11,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "Fix both, deploy server-side first.\n\n**Server-side (deploy immediately):** Keep the `field_validator` that wraps a bare string into a list. This is a defensive fix that costs nothing and protects against the SDK bug and any other caller that makes the same mistake:\n\n```python\n@field_validator('stop_sequences', mode='before')\n@classmethod\ndef wrap_single_stop(cls, v):\n    if isinstance(v, str):\n        return [v]\n    return v\n```\n\n**SDK-side (fix and release):**\n```python\nif stop is not None:\n    payload[\"stop_sequences\"] = list(stop)  # always a list, regardless of length\n```\n\nThe rollout order matters: server fix first so existing SDK versions stop 422ing, then SDK fix so new callers send correct types, then eventually (months later, if ever) you could consider removing the server-side leniency.\n\nIn practice, I'd leave the server-side validator permanently. It's 3 lines, it has zero performance cost, and the \"bare string instead of list-of-one-string\" mistake is so common across JSON APIs that you'll hit it again with a different caller. Robustness principle — be liberal in what you accept.\n\nSo to recap everything we've found:\n\n| Issue | Root Cause | Fix |\n|-------|-----------|-----|\n| 12% 422 spike | LB `X-Priority` header injected as string, model expects int | `IntEnum` + `field_validator` coercion |\n| Sporadic 422 on single stop sequence | SDK serializes `stop_sequences` as bare string when `len == 1` | Server-side wrap validator + SDK fix |\n| Rare 422 on malformed timestamps | Callers sending non-ISO strings for `request_time` | `field_validator` with fallback to `None` |\n| `request._body` mutation | Undocumented Starlette internal | Tech debt note, not blocking |\n\nThe `IntEnum` approach solves the priority issue across REST, gRPC, middleware, and LB headers with one type definition. The server-side validators handle the long tail of caller bugs.",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        }
+      ],
+      "timestamp": "2026-03-31T09:24:31.000Z",
+      "input_tokens": 0,
+      "output_tokens": 398,
+      "cumulative_tokens": 3959
+    }
+  ],
+  "replay": {
+    "prefix_group_id": "pg-fastapi-type-debug-001",
+    "prefix_overlap_ratio": 0.85,
+    "reuse_distance_turns": 1,
+    "reuse_distance_seconds": 12,
+    "estimated_kv_bytes_peak": 31672000,
+    "branch_count": 1,
+    "idle_windows_ms": [
+      0,
+      2000,
+      5000,
+      3000
+    ],
+    "arrival_pattern": "poisson_bursty"
+  },
+  "kv_pressure": {
+    "cold_start": false,
+    "warm_cache_hit_rate": 0.85,
+    "estimated_offload_bytes": 6334400,
+    "estimated_reload_bytes": 3167200,
+    "tier": "HBM",
+    "cache_expectation": "warm",
+    "eviction_risk_score": 0.18
+  },
+  "provenance": {
+    "generator_model": "claude",
+    "generator_prompt_version": "v0.1.0",
+    "pipeline_version": "0.1.0"
+  }
+}

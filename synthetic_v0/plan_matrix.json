@@ -1,0 +1,563 @@
+[
+  {
+    "trace_id": "lc1_a57b0fa3",
+    "family": "long_chat",
+    "goal": "Debug a subtle Python type error through multi-turn reasoning",
+    "target_bin": "8k_16k",
+    "num_turns": 12,
+    "prefix_style": "conversational",
+    "tool_pattern": [],
+    "branch_pattern": "none",
+    "idle_windows_ms": [
+      0,
+      2000,
+      5000,
+      3000
+    ],
+    "expected_prefix_overlap_ratio": 0.85,
+    "cache_expectation": "warm",
+    "contains_rag": false,
+    "generator_model": "claude"
+  },
+  {
+    "trace_id": "lc1_dcfedc37",
+    "family": "long_chat",
+    "goal": "Plan a database migration strategy with tradeoff analysis",
+    "target_bin": "8k_16k",
+    "num_turns": 14,
+    "prefix_style": "conversational",
+    "tool_pattern": [],
+    "branch_pattern": "none",
+    "idle_windows_ms": [
+      0,
+      1000,
+      8000,
+      2000
+    ],
+    "expected_prefix_overlap_ratio": 0.82,
+    "cache_expectation": "warm",
+    "contains_rag": false,
+    "generator_model": "codex"
+  },
+  {
+    "trace_id": "lc1_20e1c228",
+    "family": "long_chat",
+    "goal": "Analyze a research paper with iterative clarification questions",
+    "target_bin": "8k_16k",
+    "num_turns": 10,
+    "prefix_style": "rag_retrieval",
+    "tool_pattern": [],
+    "branch_pattern": "none",
+    "idle_windows_ms": [
+      0,
+      3000,
+      6000,
+      4000
+    ],
+    "expected_prefix_overlap_ratio": 0.78,
+    "cache_expectation": "warm",
+    "contains_rag": true,
+    "generator_model": "claude"
+  },
+  {
+    "trace_id": "lc1_0e0a9ad2",
+    "family": "long_chat",
+    "goal": "Design a REST API with evolving requirements across turns",
+    "target_bin": "8k_16k",
+    "num_turns": 11,
+    "prefix_style": "conversational",
+    "tool_pattern": [],
+    "branch_pattern": "none",
+    "idle_windows_ms": [
+      0,
+      2000,
+      4000,
+      1000
+    ],
+    "expected_prefix_overlap_ratio": 0.88,
+    "cache_expectation": "warm",
+    "contains_rag": false,
+    "generator_model": "codex"
+  },
+  {
+    "trace_id": "lc2_f4e0516c",
+    "family": "long_chat",
+    "goal": "Extended code review of a 2000-line PR with multi-file discussion",
+    "target_bin": "32k_64k",
+    "num_turns": 20,
+    "prefix_style": "large_repo_prefix",
+    "tool_pattern": [],
+    "branch_pattern": "none",
+    "idle_windows_ms": [
+      0,
+      5000,
+      15000,
+      8000,
+      30000
+    ],
+    "expected_prefix_overlap_ratio": 0.9,
+    "cache_expectation": "warm",
+    "contains_rag": false,
+    "generator_model": "claude"
+  },
+  {
+    "trace_id": "lc2_f3de314e",
+    "family": "long_chat",
+    "goal": "Troubleshoot production incident with log analysis across multiple turns",
+    "target_bin": "32k_64k",
+    "num_turns": 18,
+    "prefix_style": "rag_retrieval",
+    "tool_pattern": [],
+    "branch_pattern": "none",
+    "idle_windows_ms": [
+      0,
+      3000,
+      10000,
+      60000,
+      5000
+    ],
+    "expected_prefix_overlap_ratio": 0.85,
+    "cache_expectation": "reactivated",
+    "contains_rag": true,
+    "generator_model": "codex"
+  },
+  {
+    "trace_id": "lc2_21a12202",
+    "family": "long_chat",
+    "goal": "Write a technical RFC with iterative feedback and revisions",
+    "target_bin": "32k_64k",
+    "num_turns": 22,
+    "prefix_style": "conversational",
+    "tool_pattern": [],
+    "branch_pattern": "none",
+    "idle_windows_ms": [
+      0,
+      4000,
+      8000,
+      120000,
+      3000
+    ],
+    "expected_prefix_overlap_ratio": 0.88,
+    "cache_expectation": "reactivated",
+    "contains_rag": false,
+    "generator_model": "claude"
+  },
+  {
+    "trace_id": "lc2_02583005",
+    "family": "long_chat",
+    "goal": "Deep-dive into Kubernetes networking with reference docs and follow-ups",
+    "target_bin": "32k_64k",
+    "num_turns": 16,
+    "prefix_style": "rag_retrieval",
+    "tool_pattern": [],
+    "branch_pattern": "none",
+    "idle_windows_ms": [
+      0,
+      6000,
+      12000,
+      5000
+    ],
+    "expected_prefix_overlap_ratio": 0.82,
+    "cache_expectation": "warm",
+    "contains_rag": true,
+    "generator_model": "codex"
+  },
+  {
+    "trace_id": "lc3_40f8257b",
+    "family": "long_chat",
+    "goal": "Analyze and compare three competing system architectures with full specs",
+    "target_bin": "96k_128k",
+    "num_turns": 28,
+    "prefix_style": "large_repo_prefix",
+    "tool_pattern": [],
+    "branch_pattern": "none",
+    "idle_windows_ms": [
+      0,
+      8000,
+      20000,
+      180000,
+      10000,
+      5000
+    ],
+    "expected_prefix_overlap_ratio": 0.92,
+    "cache_expectation": "reactivated",
+    "contains_rag": false,
+    "generator_model": "claude"
+  },
+  {
+    "trace_id": "lc3_0fa95b61",
+    "family": "long_chat",
+    "goal": "Multi-session legal document review with clause-by-clause analysis",
+    "target_bin": "96k_128k",
+    "num_turns": 30,
+    "prefix_style": "rag_retrieval",
+    "tool_pattern": [],
+    "branch_pattern": "none",
+    "idle_windows_ms": [
+      0,
+      5000,
+      15000,
+      300000,
+      8000
+    ],
+    "expected_prefix_overlap_ratio": 0.94,
+    "cache_expectation": "reactivated",
+    "contains_rag": true,
+    "generator_model": "codex"
+  },
+  {
+    "trace_id": "lc3_f18df7f1",
+    "family": "long_chat",
+    "goal": "Extended debugging session across a large codebase with stack traces",
+    "target_bin": "96k_128k",
+    "num_turns": 25,
+    "prefix_style": "large_repo_prefix",
+    "tool_pattern": [],
+    "branch_pattern": "none",
+    "idle_windows_ms": [
+      0,
+      10000,
+      30000,
+      60000,
+      15000
+    ],
+    "expected_prefix_overlap_ratio": 0.91,
+    "cache_expectation": "warm",
+    "contains_rag": false,
+    "generator_model": "claude"
+  },
+  {
+    "trace_id": "lc3_c4d7fdc7",
+    "family": "long_chat",
+    "goal": "Full-day pair programming session with context accumulation",
+    "target_bin": "96k_128k",
+    "num_turns": 32,
+    "prefix_style": "conversational",
+    "tool_pattern": [],
+    "branch_pattern": "none",
+    "idle_windows_ms": [
+      0,
+      3000,
+      8000,
+      600000,
+      5000,
+      120000
+    ],
+    "expected_prefix_overlap_ratio": 0.95,
+    "cache_expectation": "reactivated",
+    "contains_rag": false,
+    "generator_model": "codex"
+  },
+  {
+    "trace_id": "ca1_0eaf17e9",
+    "family": "coding",
+    "goal": "Fix a failing unit test in a Flask app",
+    "target_bin": "16k_32k",
+    "num_turns": 12,
+    "prefix_style": "large_repo_prefix",
+    "tool_pattern": [
+      "read",
+      "grep",
+      "edit",
+      "bash"
+    ],
+    "branch_pattern": "none",
+    "idle_windows_ms": [
+      0,
+      2000,
+      4000,
+      3000
+    ],
+    "expected_prefix_overlap_ratio": 0.7,
+    "cache_expectation": "warm",
+    "contains_rag": false,
+    "generator_model": "claude"
+  },
+  {
+    "trace_id": "ca1_13dcfb5f",
+    "family": "coding",
+    "goal": "Add pagination to a Django REST endpoint",
+    "target_bin": "16k_32k",
+    "num_turns": 14,
+    "prefix_style": "large_repo_prefix",
+    "tool_pattern": [
+      "read",
+      "edit",
+      "bash"
+    ],
+    "branch_pattern": "one_failed_fix_then_retry",
+    "idle_windows_ms": [
+      0,
+      3000,
+      5000,
+      2000
+    ],
+    "expected_prefix_overlap_ratio": 0.68,
+    "cache_expectation": "warm",
+    "contains_rag": false,
+    "generator_model": "codex"
+  },
+  {
+    "trace_id": "ca1_dd28ce3e",
+    "family": "coding",
+    "goal": "Review and fix security vulnerabilities flagged by Bandit",
+    "target_bin": "16k_32k",
+    "num_turns": 10,
+    "prefix_style": "large_repo_prefix",
+    "tool_pattern": [
+      "read",
+      "grep",
+      "edit"
+    ],
+    "branch_pattern": "none",
+    "idle_windows_ms": [
+      0,
+      2000,
+      6000,
+      4000
+    ],
+    "expected_prefix_overlap_ratio": 0.72,
+    "cache_expectation": "warm",
+    "contains_rag": true,
+    "generator_model": "claude"
+  },
+  {
+    "trace_id": "ca1_10994ad7",
+    "family": "coding",
+    "goal": "Refactor a monolithic function into smaller units with tests",
+    "target_bin": "16k_32k",
+    "num_turns": 16,
+    "prefix_style": "large_repo_prefix",
+    "tool_pattern": [
+      "read",
+      "edit",
+      "bash",
+      "execution"
+    ],
+    "branch_pattern": "one_failed_fix_then_retry",
+    "idle_windows_ms": [
+      0,
+      1000,
+      3000,
+      8000
+    ],
+    "expected_prefix_overlap_ratio": 0.75,
+    "cache_expectation": "warm",
+    "contains_rag": false,
+    "generator_model": "codex"
+  },
+  {
+    "trace_id": "ca2_f67863d4",
+    "family": "coding",
+    "goal": "Debug flaky CI test in a Django-like repo with log analysis",
+    "target_bin": "64k_96k",
+    "num_turns": 22,
+    "prefix_style": "large_repo_prefix",
+    "tool_pattern": [
+      "read",
+      "grep",
+      "bash",
+      "edit",
+      "execution"
+    ],
+    "branch_pattern": "one_failed_fix_then_retry",
+    "idle_windows_ms": [
+      0,
+      4000,
+      15000,
+      120000,
+      5000
+    ],
+    "expected_prefix_overlap_ratio": 0.72,
+    "cache_expectation": "reactivated",
+    "contains_rag": false,
+    "generator_model": "claude"
+  },
+  {
+    "trace_id": "ca2_ae22d349",
+    "family": "coding",
+    "goal": "Implement a new API endpoint with database migration and tests",
+    "target_bin": "64k_96k",
+    "num_turns": 20,
+    "prefix_style": "large_repo_prefix",
+    "tool_pattern": [
+      "read",
+      "edit",
+      "bash",
+      "execution"
+    ],
+    "branch_pattern": "two_alternatives",
+    "idle_windows_ms": [
+      0,
+      3000,
+      8000,
+      60000,
+      4000
+    ],
+    "expected_prefix_overlap_ratio": 0.68,
+    "cache_expectation": "reactivated",
+    "contains_rag": false,
+    "generator_model": "codex"
+  },
+  {
+    "trace_id": "ca2_4baa5e57",
+    "family": "coding",
+    "goal": "Investigate and fix a memory leak using profiling output",
+    "target_bin": "64k_96k",
+    "num_turns": 18,
+    "prefix_style": "large_repo_prefix",
+    "tool_pattern": [
+      "read",
+      "bash",
+      "grep",
+      "edit"
+    ],
+    "branch_pattern": "one_failed_fix_then_retry",
+    "idle_windows_ms": [
+      0,
+      5000,
+      20000,
+      10000
+    ],
+    "expected_prefix_overlap_ratio": 0.75,
+    "cache_expectation": "warm",
+    "contains_rag": true,
+    "generator_model": "claude"
+  },
+  {
+    "trace_id": "ca2_fc6cc362",
+    "family": "coding",
+    "goal": "Port a Python 2 codebase to Python 3 with incremental test verification",
+    "target_bin": "64k_96k",
+    "num_turns": 24,
+    "prefix_style": "large_repo_prefix",
+    "tool_pattern": [
+      "read",
+      "grep",
+      "edit",
+      "bash",
+      "execution"
+    ],
+    "branch_pattern": "one_failed_fix_then_retry",
+    "idle_windows_ms": [
+      0,
+      2000,
+      10000,
+      5000,
+      30000
+    ],
+    "expected_prefix_overlap_ratio": 0.8,
+    "cache_expectation": "warm",
+    "contains_rag": true,
+    "generator_model": "codex"
+  },
+  {
+    "trace_id": "ca3_c090f8ee",
+    "family": "coding",
+    "goal": "Full repo audit with security review, performance profiling, and fixes",
+    "target_bin": "128k_plus",
+    "num_turns": 30,
+    "prefix_style": "large_repo_prefix",
+    "tool_pattern": [
+      "read",
+      "grep",
+      "bash",
+      "edit",
+      "execution"
+    ],
+    "branch_pattern": "two_alternatives",
+    "idle_windows_ms": [
+      0,
+      5000,
+      30000,
+      300000,
+      10000,
+      60000
+    ],
+    "expected_prefix_overlap_ratio": 0.65,
+    "cache_expectation": "reactivated",
+    "contains_rag": false,
+    "generator_model": "claude"
+  },
+  {
+    "trace_id": "ca3_d25356ec",
+    "family": "coding",
+    "goal": "Migrate a microservice from REST to gRPC with full test coverage",
+    "target_bin": "128k_plus",
+    "num_turns": 28,
+    "prefix_style": "large_repo_prefix",
+    "tool_pattern": [
+      "read",
+      "edit",
+      "bash",
+      "execution",
+      "grep"
+    ],
+    "branch_pattern": "one_failed_fix_then_retry",
+    "idle_windows_ms": [
+      0,
+      8000,
+      20000,
+      180000,
+      15000
+    ],
+    "expected_prefix_overlap_ratio": 0.7,
+    "cache_expectation": "reactivated",
+    "contains_rag": false,
+    "generator_model": "codex"
+  },
+  {
+    "trace_id": "ca3_892f38e4",
+    "family": "coding",
+    "goal": "Build a complete CLI tool from scratch with tests, CI, and docs",
+    "target_bin": "128k_plus",
+    "num_turns": 35,
+    "prefix_style": "large_repo_prefix",
+    "tool_pattern": [
+      "read",
+      "edit",
+      "bash",
+      "execution"
+    ],
+    "branch_pattern": "two_alternatives",
+    "idle_windows_ms": [
+      0,
+      3000,
+      15000,
+      600000,
+      8000,
+      120000
+    ],
+    "expected_prefix_overlap_ratio": 0.6,
+    "cache_expectation": "reactivated",
+    "contains_rag": true,
+    "generator_model": "claude"
+  },
+  {
+    "trace_id": "ca3_cf38a248",
+    "family": "coding",
+    "goal": "Debug and optimize a data pipeline processing 1M+ records with OOM errors",
+    "target_bin": "128k_plus",
+    "num_turns": 26,
+    "prefix_style": "large_repo_prefix",
+    "tool_pattern": [
+      "read",
+      "bash",
+      "grep",
+      "edit",
+      "execution"
+    ],
+    "branch_pattern": "one_failed_fix_then_retry",
+    "idle_windows_ms": [
+      0,
+      10000,
+      45000,
+      240000,
+      20000
+    ],
+    "expected_prefix_overlap_ratio": 0.72,
+    "cache_expectation": "reactivated",
+    "contains_rag": false,
+    "generator_model": "codex"
+  }
+]
