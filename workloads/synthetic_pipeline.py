@@ -38,17 +38,43 @@ MANIFESTS_DIR = OUTPUT_DIR / "manifests"
 PLAN_FILE = OUTPUT_DIR / "plan_matrix.json"
 EVAL_FILE = OUTPUT_DIR / "evaluations.jsonl"
 
+# Bin mapping: plan target_bin -> directory name
+BIN_DIR_MAP = {
+    "8k_16k": "lc1",
+    "32k_64k": "lc2",
+    "96k_128k": "lc3",
+    "16k_32k": "ca1",
+    "64k_96k": "ca2",
+    "128k_plus": "ca3",
+}
+
+# Family mapping: plan family -> directory name
+FAMILY_DIR_MAP = {
+    "long_chat": "long_chat",
+    "coding": "coding",
+}
+
+
+def _trace_dir(plan: TracePlan, source_type: str = "synthetic") -> Path:
+    """Get the organized directory for a trace based on its plan."""
+    family_dir = FAMILY_DIR_MAP.get(plan.family, plan.family)
+    bin_dir = BIN_DIR_MAP.get(plan.target_bin, plan.target_bin)
+    return TRACES_DIR / source_type / family_dir / bin_dir
+
 
 def ensure_dirs() -> None:
-    TRACES_DIR.mkdir(parents=True, exist_ok=True)
     MANIFESTS_DIR.mkdir(parents=True, exist_ok=True)
+    for source in ("synthetic", "real"):
+        for family in ("long_chat", "coding"):
+            for bin_dir in ("lc1", "lc2", "lc3") if family == "long_chat" else ("ca1", "ca2", "ca3"):
+                (TRACES_DIR / source / family / bin_dir).mkdir(parents=True, exist_ok=True)
 
 
 def load_existing_trace_ids() -> set[str]:
-    """Find already-generated trace IDs for resume support."""
+    """Find already-generated trace IDs for resume support. Searches all subdirs."""
     existing = set()
     if TRACES_DIR.exists():
-        for f in TRACES_DIR.glob("*.json"):
+        for f in TRACES_DIR.rglob("*.json"):
             try:
                 data = json.loads(f.read_text())
                 existing.add(data.get("trace_id", ""))
@@ -58,10 +84,10 @@ def load_existing_trace_ids() -> set[str]:
 
 
 def load_traces() -> list[SessionTrace]:
-    """Load all generated traces."""
+    """Load all generated traces from all subdirs."""
     traces = []
     if TRACES_DIR.exists():
-        for f in sorted(TRACES_DIR.glob("*.json")):
+        for f in sorted(TRACES_DIR.rglob("*.json")):
             try:
                 traces.append(SessionTrace.model_validate_json(f.read_text()))
             except Exception as e:
@@ -118,8 +144,10 @@ def cmd_generate() -> None:
         try:
             trace = generate_trace(plan)
 
-            # Save trace
-            trace_file = TRACES_DIR / f"{plan.trace_id}.json"
+            # Save trace to organized directory
+            trace_dir = _trace_dir(plan, source_type=trace.source_type)
+            trace_dir.mkdir(parents=True, exist_ok=True)
+            trace_file = trace_dir / f"{plan.trace_id}.json"
             trace_file.write_text(trace.model_dump_json(indent=2))
 
             print(
