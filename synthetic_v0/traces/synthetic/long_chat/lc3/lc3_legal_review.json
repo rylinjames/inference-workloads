@@ -1,0 +1,614 @@
+{
+    "trace_id": "lc3_legal_review_clause_matrix_001",
+    "dataset_version": "0.1.0",
+    "source_type": "synthetic",
+    "workload_family": "long_chat",
+    "language": "en",
+    "tokenizer": {
+        "name": "cl100k_base",
+        "version": "1.0"
+    },
+    "session": {
+        "session_id": "sess-legal-review-reactivated-001",
+        "goal": "Multi-session legal document review with clause-by-clause analysis across an MSA, DPA, SLA, and order form",
+        "contains_tools": false,
+        "contains_rag": true,
+        "contains_branching": false,
+        "contains_multimodal": false
+    },
+    "turns": [
+        {
+            "turn_id": 0,
+            "parent_turn_id": null,
+            "role": "system",
+            "content_blocks": [
+                {
+                    "type": "text",
+                    "text": "You are commercial counsel reviewing a SaaS MSA, order form, DPA, and SLA. Give clause-by-clause risk analysis, preserve cross-references, and propose practical fallback language for a customer-side negotiation.",
+                    "metadata": {}
+                }
+            ],
+            "timestamp": "2026-04-07T09:00:00Z",
+            "input_tokens": 320,
+            "output_tokens": 0,
+            "cumulative_tokens": 320
+        },
+        {
+            "turn_id": 1,
+            "parent_turn_id": 0,
+            "role": "user",
+            "content_blocks": [
+                {
+                    "type": "text",
+                    "text": "Review this vendor stack over multiple passes. I need a legal risk map first, then a negotiation matrix covering term, liability, indemnity, privacy, SLA, assignment, audit, and disputes.",
+                    "metadata": {}
+                }
+            ],
+            "timestamp": "2026-04-07T09:00:06Z",
+            "input_tokens": 1250,
+            "output_tokens": 0,
+            "cumulative_tokens": 1570
+        },
+        {
+            "turn_id": 2,
+            "parent_turn_id": 1,
+            "role": "retrieval",
+            "content_blocks": [
+                {
+                    "type": "document",
+                    "text": "Order Form plus MSA Sections 1-3: annual prepaid SaaS term, 45-day auto-renew notice, no uplift cap, internal-use-only license, contractor access by consent, no benchmarking publication, no competitive model training, vendor may suspend for suspected security or excessive use, and support/SLA credits govern service issues.",
+                    "uri": "synthetic://contracts/insightvault/intake",
+                    "mime_type": "application/pdf",
+                    "metadata": {
+                        "document_ids": [
+                            "OF-2026-041",
+                            "MSA-v5"
+                        ],
+                        "sections": [
+                            "Order Form",
+                            "1-3"
+                        ],
+                        "review_stage": "intake"
+                    }
+                }
+            ],
+            "timestamp": "2026-04-07T09:00:10Z",
+            "input_tokens": 6200,
+            "output_tokens": 0,
+            "cumulative_tokens": 7770
+        },
+        {
+            "turn_id": 3,
+            "parent_turn_id": 2,
+            "role": "assistant",
+            "content_blocks": [
+                {
+                    "type": "text",
+                    "text": "Initial map: P0 issues are renewal pricing, suspension/termination mechanics, liability carve-outs for privacy and confidentiality, DPA deletion alignment, and customer indemnity overreach. P1 issues are SLA exclusions, residuals, audit asymmetry, and assignment wording.",
+                    "metadata": {}
+                }
+            ],
+            "timestamp": "2026-04-07T09:00:24Z",
+            "input_tokens": 0,
+            "output_tokens": 2500,
+            "cumulative_tokens": 10270
+        },
+        {
+            "turn_id": 4,
+            "parent_turn_id": 3,
+            "role": "user",
+            "content_blocks": [
+                {
+                    "type": "text",
+                    "text": "Start with term and termination. Focus on auto-renewal, termination for cause, cure periods, suspension risk, and post-termination export rights.",
+                    "metadata": {}
+                }
+            ],
+            "timestamp": "2026-04-07T09:00:31Z",
+            "input_tokens": 1800,
+            "output_tokens": 0,
+            "cumulative_tokens": 12070
+        },
+        {
+            "turn_id": 5,
+            "parent_turn_id": 4,
+            "role": "retrieval",
+            "content_blocks": [
+                {
+                    "type": "document",
+                    "text": "MSA Section 8: evergreen renewals at then-current rates; 30-day cure for material breach, 10 days for payment breaches; immediate vendor suspension/termination for Section 3 violations if vendor reasonably believes continued use creates security, legal, or operational risk; export request within 15 days after termination if undisputed fees are paid; deletion within 60 days.",
+                    "uri": "synthetic://contracts/insightvault/section8",
+                    "mime_type": "application/pdf",
+                    "metadata": {
+                        "document_id": "MSA-v5",
+                        "section": "8",
+                        "topics": [
+                            "renewal",
+                            "cure",
+                            "suspension",
+                            "export",
+                            "deletion"
+                        ]
+                    }
+                }
+            ],
+            "timestamp": "2026-04-07T09:00:37Z",
+            "input_tokens": 7100,
+            "output_tokens": 0,
+            "cumulative_tokens": 19170
+        },
+        {
+            "turn_id": 6,
+            "parent_turn_id": 5,
+            "role": "assistant",
+            "content_blocks": [
+                {
+                    "type": "text",
+                    "text": "This clause is salvageable but vendor-favorable. Ask for a renewal uplift cap, suspension only for specific documented threats, and at least 30 days of read-only/export access. The 15-day export window and open-ended then-current pricing are the main commercial defects.",
+                    "metadata": {}
+                }
+            ],
+            "timestamp": "2026-04-07T09:01:02Z",
+            "input_tokens": 0,
+            "output_tokens": 3200,
+            "cumulative_tokens": 22370
+        },
+        {
+            "turn_id": 7,
+            "parent_turn_id": 6,
+            "role": "user",
+            "content_blocks": [
+                {
+                    "type": "text",
+                    "text": "Now analyze liability with privacy/security cross-references. I need the cap structure, carve-outs, SLA remedy interaction, and incident notice timing.",
+                    "metadata": {}
+                }
+            ],
+            "timestamp": "2026-04-07T09:01:21Z",
+            "input_tokens": 1600,
+            "output_tokens": 0,
+            "cumulative_tokens": 23970
+        },
+        {
+            "turn_id": 8,
+            "parent_turn_id": 7,
+            "role": "retrieval",
+            "content_blocks": [
+                {
+                    "type": "document",
+                    "text": "MSA Section 10 plus DPA Sections 7 and 9: general cap is fees paid/payable in prior 12 months; customer confidentiality/use-restriction breaches are outside the cap; vendor indemnity is outside the cap; vendor confidentiality and DPA/security breaches are not carved out; SLA credits are sole remedy for service failures; incident notice is without undue delay and within 72 hours after confirmation; DPA deletion is 45 days.",
+                    "uri": "synthetic://contracts/insightvault/liability_dpa",
+                    "mime_type": "application/pdf",
+                    "metadata": {
+                        "document_ids": [
+                            "MSA-v5",
+                            "DPA-v3"
+                        ],
+                        "sections": [
+                            "10",
+                            "DPA 7",
+                            "DPA 9"
+                        ],
+                        "cross_reference": "privacy-liability"
+                    }
+                }
+            ],
+            "timestamp": "2026-04-07T09:01:27Z",
+            "input_tokens": 6800,
+            "output_tokens": 0,
+            "cumulative_tokens": 30770
+        },
+        {
+            "turn_id": 9,
+            "parent_turn_id": 8,
+            "role": "assistant",
+            "content_blocks": [
+                {
+                    "type": "text",
+                    "text": "This is the core structural issue. Vendor privacy/security exposure stays inside the ordinary cap while customer-side confidentiality and restriction breaches are uncapped. Ask for vendor carve-outs for confidentiality, DPA/security breaches, gross negligence, willful misconduct, and indemnity; also make clear SLA sole remedy does not override those claims.",
+                    "metadata": {}
+                }
+            ],
+            "timestamp": "2026-04-07T09:01:54Z",
+            "input_tokens": 0,
+            "output_tokens": 3400,
+            "cumulative_tokens": 34170
+        },
+        {
+            "turn_id": 10,
+            "parent_turn_id": 9,
+            "role": "user",
+            "content_blocks": [
+                {
+                    "type": "text",
+                    "text": "Back on the thread. Review indemnity now, especially IP claims and whether the customer indemnity is expanded by the prompt/training/output wording.",
+                    "metadata": {}
+                }
+            ],
+            "timestamp": "2026-04-07T09:06:54Z",
+            "input_tokens": 1500,
+            "output_tokens": 0,
+            "cumulative_tokens": 35670
+        },
+        {
+            "turn_id": 11,
+            "parent_turn_id": 10,
+            "role": "retrieval",
+            "content_blocks": [
+                {
+                    "type": "document",
+                    "text": "MSA Section 11: vendor defends third-party IP claims against the service, subject to standard exclusions; customer indemnifies claims arising from Customer Data, use in violation of the agreement, and allegations that prompts, training inputs, or output-based workflows infringe, misappropriate, defame, or violate law or rights. Section 3 also bans competitive model training and benchmarking.",
+                    "uri": "synthetic://contracts/insightvault/section11",
+                    "mime_type": "application/pdf",
+                    "metadata": {
+                        "document_id": "MSA-v5",
+                        "section": "11",
+                        "linked_sections": [
+                            "3.2"
+                        ]
+                    }
+                }
+            ],
+            "timestamp": "2026-04-07T09:07:00Z",
+            "input_tokens": 6600,
+            "output_tokens": 0,
+            "cumulative_tokens": 42270
+        },
+        {
+            "turn_id": 12,
+            "parent_turn_id": 11,
+            "role": "assistant",
+            "content_blocks": [
+                {
+                    "type": "text",
+                    "text": "Vendor indemnity is usable, but customer indemnity is too broad. \u201cOutput-based workflows\u201d plus the training-input language could shift model-behavior risk to the customer. Narrow it to Customer Data and material misuse, and exclude claims caused by vendor technology or authorized use of output.",
+                    "metadata": {}
+                }
+            ],
+            "timestamp": "2026-04-07T09:07:28Z",
+            "input_tokens": 0,
+            "output_tokens": 3300,
+            "cumulative_tokens": 45570
+        },
+        {
+            "turn_id": 13,
+            "parent_turn_id": 12,
+            "role": "user",
+            "content_blocks": [
+                {
+                    "type": "text",
+                    "text": "Do the DPA next. I care about subprocessors, transfers, audits, deletion timing, and whether technical measures can be changed too freely.",
+                    "metadata": {}
+                }
+            ],
+            "timestamp": "2026-04-07T09:07:40Z",
+            "input_tokens": 1700,
+            "output_tokens": 0,
+            "cumulative_tokens": 47270
+        },
+        {
+            "turn_id": 14,
+            "parent_turn_id": 13,
+            "role": "retrieval",
+            "content_blocks": [
+                {
+                    "type": "document",
+                    "text": "DPA Sections 3-10: general subprocessor authorization with 10 days notice and 5 days to object; unresolved objection lets vendor discontinue affected services; SCCs and UK addendum incorporated by reference; audits are mostly annual remote reviews of reports/certifications; on-site audits only if legally required or remote review is insufficient; deletion/return within 45 days; Annex II controls may change if overall security is not materially diminished.",
+                    "uri": "synthetic://contracts/insightvault/dpa_core",
+                    "mime_type": "application/pdf",
+                    "metadata": {
+                        "document_id": "DPA-v3",
+                        "sections": [
+                            "3-10"
+                        ],
+                        "review_stage": "privacy-pass"
+                    }
+                }
+            ],
+            "timestamp": "2026-04-07T09:07:47Z",
+            "input_tokens": 7600,
+            "output_tokens": 0,
+            "cumulative_tokens": 54870
+        },
+        {
+            "turn_id": 15,
+            "parent_turn_id": 14,
+            "role": "assistant",
+            "content_blocks": [
+                {
+                    "type": "text",
+                    "text": "The DPA is workable but tilted toward operational flexibility for the vendor. Strengthen subprocessor notice and objection handling, tighten audit support, require objectively equivalent controls before Annex II changes, and align DPA deletion with the MSA export/deletion mechanics we flagged earlier.",
+                    "metadata": {}
+                }
+            ],
+            "timestamp": "2026-04-07T09:08:18Z",
+            "input_tokens": 0,
+            "output_tokens": 3600,
+            "cumulative_tokens": 58470
+        },
+        {
+            "turn_id": 16,
+            "parent_turn_id": 15,
+            "role": "user",
+            "content_blocks": [
+                {
+                    "type": "text",
+                    "text": "Review confidentiality now. I am specifically worried about compelled disclosure and any residuals concept because users will upload sensitive draft contracts and negotiation notes.",
+                    "metadata": {}
+                }
+            ],
+            "timestamp": "2026-04-07T09:08:32Z",
+            "input_tokens": 1550,
+            "output_tokens": 0,
+            "cumulative_tokens": 60020
+        },
+        {
+            "turn_id": 17,
+            "parent_turn_id": 16,
+            "role": "retrieval",
+            "content_blocks": [
+                {
+                    "type": "document",
+                    "text": "MSA Section 9: standard confidentiality use-and-care obligations; compelled disclosure with prior notice where legally permitted and cooperation for protective treatment; residuals clause allows use of information retained in unaided memory so long as personnel do not intentionally memorize to circumvent the agreement; equitable relief allowed. DPA confidentiality section has no residuals concept.",
+                    "uri": "synthetic://contracts/insightvault/confidentiality",
+                    "mime_type": "application/pdf",
+                    "metadata": {
+                        "document_id": "MSA-v5",
+                        "section": "9",
+                        "linked_sections": [
+                            "DPA 4"
+                        ]
+                    }
+                }
+            ],
+            "timestamp": "2026-04-07T09:08:40Z",
+            "input_tokens": 5900,
+            "output_tokens": 0,
+            "cumulative_tokens": 65920
+        },
+        {
+            "turn_id": 18,
+            "parent_turn_id": 17,
+            "role": "assistant",
+            "content_blocks": [
+                {
+                    "type": "text",
+                    "text": "Delete the residuals clause if possible. It is a poor fit for a contract-analysis product handling sensitive negotiation materials. Also add a minimum-necessary disclosure standard for compelled disclosures. If residuals stay, carve out Customer Data, personal data, prompts, pricing, trade secrets, and any model-training use.",
+                    "metadata": {}
+                }
+            ],
+            "timestamp": "2026-04-07T09:09:01Z",
+            "input_tokens": 0,
+            "output_tokens": 3100,
+            "cumulative_tokens": 69020
+        },
+        {
+            "turn_id": 19,
+            "parent_turn_id": 18,
+            "role": "user",
+            "content_blocks": [
+                {
+                    "type": "text",
+                    "text": "Analyze the SLA. Is the uptime promise meaningful, and how much do the exclusions plus sole-remedy language matter after your liability point?",
+                    "metadata": {}
+                }
+            ],
+            "timestamp": "2026-04-07T09:09:15Z",
+            "input_tokens": 1450,
+            "output_tokens": 0,
+            "cumulative_tokens": 70470
+        },
+        {
+            "turn_id": 20,
+            "parent_turn_id": 19,
+            "role": "retrieval",
+            "content_blocks": [
+                {
+                    "type": "document",
+                    "text": "SLA Exhibit A: 99.9 percent monthly uptime target; exclusions include scheduled maintenance, emergency maintenance, force majeure, customer-caused issues, beta features, API rate limiting, third-party model provider outages, and contractually permitted suspensions. Credits range from 5 to 15 percent of monthly recurring fees, request due within 10 business days, applied only to future invoices. Chronic failure right exists after repeated sub-99 percent months. Credits and chronic-failure termination are sole remedies for SLA breaches.",
+                    "uri": "synthetic://contracts/insightvault/sla",
+                    "mime_type": "application/pdf",
+                    "metadata": {
+                        "document_id": "SLA-ExA",
+                        "section": "Availability and Credits",
+                        "cross_reference": "support"
+                    }
+                }
+            ],
+            "timestamp": "2026-04-07T09:09:22Z",
+            "input_tokens": 6500,
+            "output_tokens": 0,
+            "cumulative_tokens": 76970
+        },
+        {
+            "turn_id": 21,
+            "parent_turn_id": 20,
+            "role": "assistant",
+            "content_blocks": [
+                {
+                    "type": "text",
+                    "text": "The SLA is not fake, but the exclusions narrow it materially. The biggest issue is excluding third-party model-provider outages if those providers are core to the service. Also extend or automate credit claims, and expressly subordinate sole remedy to material breach, data loss, security incidents, and other claims outside the cap.",
+                    "metadata": {}
+                }
+            ],
+            "timestamp": "2026-04-07T09:09:45Z",
+            "input_tokens": 0,
+            "output_tokens": 3000,
+            "cumulative_tokens": 79970
+        },
+        {
+            "turn_id": 22,
+            "parent_turn_id": 21,
+            "role": "user",
+            "content_blocks": [
+                {
+                    "type": "text",
+                    "text": "Before you assemble the package, review assignment, change of control, and audit/records rights. Our parent may reorganize after financing, so consent rights cannot become leverage.",
+                    "metadata": {}
+                }
+            ],
+            "timestamp": "2026-04-07T09:09:58Z",
+            "input_tokens": 1650,
+            "output_tokens": 0,
+            "cumulative_tokens": 81620
+        },
+        {
+            "turn_id": 23,
+            "parent_turn_id": 22,
+            "role": "retrieval",
+            "content_blocks": [
+                {
+                    "type": "document",
+                    "text": "MSA Section 13: consent required for assignments except mergers, acquisitions, reorganizations, or asset sales if assignee is not a direct competitor of the non-assigning party; vendor may use customer name/logo unless customer opts out; vendor gets annual compliance audit rights and can charge costs if underpayment/overuse exceeds 5 percent; no reciprocal commercial audit right outside the DPA. Delaware law, Wilmington venue, and jury waiver apply.",
+                    "uri": "synthetic://contracts/insightvault/section13",
+                    "mime_type": "application/pdf",
+                    "metadata": {
+                        "document_id": "MSA-v5",
+                        "section": "13",
+                        "linked_sections": [
+                            "DPA 8"
+                        ]
+                    }
+                }
+            ],
+            "timestamp": "2026-04-07T09:10:05Z",
+            "input_tokens": 6100,
+            "output_tokens": 0,
+            "cumulative_tokens": 87720
+        },
+        {
+            "turn_id": 24,
+            "parent_turn_id": 23,
+            "role": "assistant",
+            "content_blocks": [
+                {
+                    "type": "text",
+                    "text": "Assignment is mostly acceptable, but narrow or remove the competitor qualifier for internal reorganizations and affiliate transfers. Vendor audit rights should be tightly scoped to records necessary to verify licensed usage. The DPA audit right is privacy-focused, so the package remains asymmetric even if not directly inconsistent.",
+                    "metadata": {}
+                }
+            ],
+            "timestamp": "2026-04-07T09:10:30Z",
+            "input_tokens": 0,
+            "output_tokens": 3200,
+            "cumulative_tokens": 90920
+        },
+        {
+            "turn_id": 25,
+            "parent_turn_id": 24,
+            "role": "user",
+            "content_blocks": [
+                {
+                    "type": "text",
+                    "text": "Build the negotiation package now. I need a clause-by-clause summary across termination, liability/privacy, indemnity, DPA, confidentiality, SLA, assignment/audit, and disputes. Pull the dispute language first.",
+                    "metadata": {}
+                }
+            ],
+            "timestamp": "2026-04-07T09:10:44Z",
+            "input_tokens": 1700,
+            "output_tokens": 0,
+            "cumulative_tokens": 92620
+        },
+        {
+            "turn_id": 26,
+            "parent_turn_id": 25,
+            "role": "retrieval",
+            "content_blocks": [
+                {
+                    "type": "document",
+                    "text": "Dispute bundle: Delaware governing law, exclusive Wilmington courts, jury waiver, mutual injunctive-relief carve-out for confidentiality and IP issues plus use-restriction violations, and a 15-day executive-escalation step before damages claims. No arbitration, no prevailing-party fees, no fee-shifting.",
+                    "uri": "synthetic://contracts/insightvault/disputes",
+                    "mime_type": "application/pdf",
+                    "metadata": {
+                        "document_id": "MSA-v5",
+                        "sections": [
+                            "13.8-13.11"
+                        ],
+                        "review_stage": "matrix-support"
+                    }
+                }
+            ],
+            "timestamp": "2026-04-07T09:10:51Z",
+            "input_tokens": 5900,
+            "output_tokens": 0,
+            "cumulative_tokens": 98520
+        },
+        {
+            "turn_id": 27,
+            "parent_turn_id": 26,
+            "role": "assistant",
+            "content_blocks": [
+                {
+                    "type": "text",
+                    "text": "Clause matrix: Termination is high risk because of open renewal pricing, broad suspension, and short export rights. Liability/privacy is high risk because vendor DPA/security exposure remains capped. Indemnity is high risk because customer indemnity sweeps in prompts and outputs. DPA is high risk because of subprocessor, audit, and deletion flexibility. Confidentiality is medium-high due to residuals. SLA is medium due to exclusions and sole-remedy wording. Assignment/audit is medium due to competitor qualifier and one-sided audits. Dispute mechanics are low-medium and usually not worth major negotiation capital. Priority asks: liability/privacy carve-outs, termination/export fixes, narrowed customer indemnity, and DPA subprocessor/deletion alignment.",
+                    "metadata": {}
+                }
+            ],
+            "timestamp": "2026-04-07T09:11:24Z",
+            "input_tokens": 0,
+            "output_tokens": 4000,
+            "cumulative_tokens": 102520
+        },
+        {
+            "turn_id": 28,
+            "parent_turn_id": 27,
+            "role": "user",
+            "content_blocks": [
+                {
+                    "type": "text",
+                    "text": "Final pass: if the vendor will move on only three items, what are the must-haves and what can we concede? Keep it short.",
+                    "metadata": {}
+                }
+            ],
+            "timestamp": "2026-04-07T09:11:37Z",
+            "input_tokens": 1100,
+            "output_tokens": 0,
+            "cumulative_tokens": 103620
+        },
+        {
+            "turn_id": 29,
+            "parent_turn_id": 28,
+            "role": "assistant",
+            "content_blocks": [
+                {
+                    "type": "text",
+                    "text": "Must-have asks: vendor-side carve-outs for confidentiality/DPA/security and indemnity; better exit rights with capped renewals, narrow suspension, and longer export timing; and narrower customer indemnity with stronger DPA subprocessor protections. Concessions: Delaware law and jury waiver, the baseline uptime target, and tightly scoped vendor usage audits if the other risk reallocations are fixed.",
+                    "metadata": {}
+                }
+            ],
+            "timestamp": "2026-04-07T09:11:55Z",
+            "input_tokens": 0,
+            "output_tokens": 3700,
+            "cumulative_tokens": 107320
+        }
+    ],
+    "replay": {
+        "prefix_group_id": "pg-legal-review-reactivated-msa-dpa",
+        "prefix_overlap_ratio": 0.94,
+        "reuse_distance_turns": 4,
+        "reuse_distance_seconds": 300,
+        "estimated_kv_bytes_peak": 1207959552,
+        "branch_count": 0,
+        "idle_windows_ms": [
+            0,
+            5000,
+            15000,
+            300000,
+            8000
+        ],
+        "arrival_pattern": "reactivation_heavy"
+    },
+    "kv_pressure": {
+        "cold_start": true,
+        "warm_cache_hit_rate": 0.58,
+        "estimated_offload_bytes": 805306368,
+        "estimated_reload_bytes": 603979776,
+        "tier": "CPU",
+        "cache_expectation": "reactivated",
+        "eviction_risk_score": 0.8
+    },
+    "provenance": {
+        "generator_model": "codex-gpt-5",
+        "generator_prompt_version": "v0.1.0",
+        "pipeline_version": "isb1-v0.1.0"
+    }
+}

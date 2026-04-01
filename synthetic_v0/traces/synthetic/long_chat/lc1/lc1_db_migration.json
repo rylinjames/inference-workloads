@@ -1,0 +1,307 @@
+{
+  "trace_id": "st-longchat-db-migration-strategy-001",
+  "dataset_version": "0.1.0",
+  "source_type": "synthetic",
+  "workload_family": "long_chat",
+  "language": "en",
+  "tokenizer": {
+    "name": "cl100k_base",
+    "version": "0.2.0"
+  },
+  "session": {
+    "session_id": "sess-db-migration-plan-4c2f",
+    "goal": "Plan a database migration strategy with tradeoff analysis for decomposing a large PostgreSQL-backed monolith",
+    "contains_tools": false,
+    "contains_rag": false,
+    "contains_branching": false,
+    "contains_multimodal": false
+  },
+  "turns": [
+    {
+      "turn_id": 0,
+      "parent_turn_id": null,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "I need a migration strategy for moving our customer platform off a single PostgreSQL 13 cluster without doing a big-bang cutover. The app is a Rails monolith with modules for auth, billing, subscriptions, analytics, and customer support. We have about 2.4 TB of data, a write-heavy subscriptions table, dozens of cross-schema joins in reporting jobs, and two hard constraints: less than 60 seconds of customer-visible impact for any cutover step and no data-loss window that would fail audit. I don't want generic advice. I need a plan I can take to architecture review, including tradeoffs between dual-write, CDC, logical replication, and schema-by-schema extraction.",
+          "metadata": {
+            "topic": "migration_strategy"
+          }
+        }
+      ],
+      "timestamp": "2026-04-12T15:00:00Z",
+      "input_tokens": 220,
+      "output_tokens": 0,
+      "cumulative_tokens": 220
+    },
+    {
+      "turn_id": 1,
+      "parent_turn_id": 0,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "This needs an incremental ownership transfer plan, not a one-time database move. I would frame the strategy around four candidate approaches and then converge on a hybrid.\\n\\nOption A is big-bang database split. It is operationally simple on paper because there is one cutover event, but it concentrates risk, creates a long freeze window, and makes rollback extremely expensive once writes diverge. Given the 60-second impact constraint, I would reject it immediately.\\n\\nOption B is service-first extraction with application dual-write. This gives fine-grained traffic control and can work when the write paths are already well isolated, but it creates correctness risk because the application becomes responsible for writing two systems atomically without a shared transaction boundary. Unless dual-write is wrapped in an outbox or compensating reconciliation loop, drift is likely.\\n\\nOption C is database-first split using logical replication or CDC. This reduces invasive application changes early, gives you an observable replication stream, and supports shadow reads before ownership transfer. The downside is that cross-domain invariants can stay implicit for too long, and teams postpone the hard work of removing direct joins.\\n\\nOption D is schema isolation inside the current cluster first, followed by per-domain extraction. That is usually the best bridge when the monolith already has loosely aligned domains but poor ownership boundaries. It lets you make dependencies visible before moving data physically.\\n\\nMy initial recommendation is a hybrid of C and D: first isolate ownership logically inside the existing cluster, then use CDC and validation gates to move each domain to its own store, and only use dual-write in narrowly scoped transitions where the owning service API is already authoritative. That gives you auditable movement, rollback points, and a realistic way to unwind reporting joins.\\n\\nIf you want, I can turn that into a staged migration plan with decision criteria for each domain and explicit tradeoffs for subscriptions, billing, and analytics separately.",
+          "metadata": {
+            "stance": "hybrid_recommendation"
+          }
+        }
+      ],
+      "timestamp": "2026-04-12T15:00:18Z",
+      "input_tokens": 0,
+      "output_tokens": 900,
+      "cumulative_tokens": 1120
+    },
+    {
+      "turn_id": 2,
+      "parent_turn_id": 1,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "Yes. Additional constraints: billing data is SOX-relevant, support needs near-real-time access to customer state during the migration, and analytics can tolerate minutes of lag but not semantic drift. The engineering org is split into platform, growth, billing, and data teams, and today all of them read the same cluster directly. The subscriptions module is the biggest problem because renewal jobs, invoice generation, and entitlement updates all touch it. Please give me a staged plan, but be specific about when to use CDC versus application-level dual-write and how to unwind shared reads without freezing feature work for a quarter.",
+          "metadata": {
+            "constraints": [
+              "SOX",
+              "shared_reads",
+              "feature_velocity"
+            ]
+          }
+        }
+      ],
+      "timestamp": "2026-04-12T15:00:52Z",
+      "input_tokens": 260,
+      "output_tokens": 0,
+      "cumulative_tokens": 1380
+    },
+    {
+      "turn_id": 3,
+      "parent_turn_id": 2,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "A workable sequence is six stages, with different migration mechanics depending on the maturity of each domain boundary.\\n\\nStage 1: Establish logical ownership in the existing cluster. Do not move data yet. Create explicit schemas or table namespaces per domain, publish a source-of-truth inventory for every table, and block new cross-domain writes except through reviewed interfaces. This is where you pay down ambiguity. The output is a dependency map, not a new platform.\\n\\nStage 2: Introduce change capture and shadow consumers. Use WAL-based CDC from the monolith cluster into domain-owned replicas or read models. The goal here is observability and confidence, not immediate cutover. Billing and subscriptions should emit a strongly typed event stream from committed changes so downstream consumers can compare old reads with replicated state. Support and analytics can start using shadow projections before anyone rewrites write paths.\\n\\nStage 3: Move read traffic before write traffic. Support is a good early candidate because it needs freshness but not authoring rights. Point support tools at a customer-state read model fed from CDC and compare it against the monolith for a fixed bake period. Analytics should move to a warehouse or replicated analytical store fed by the same CDC stream, which removes the worst reporting joins from the transactional cluster.\\n\\nStage 4: Extract write authority one domain at a time. For low-risk domains, the owning application service can dual-write during a short transition window while reconciliation runs continuously. For billing and subscriptions, I would avoid naive dual-write. Instead, move write authority behind a domain service, persist the canonical transaction in the new store, and publish an outbox event back to legacy consumers until the monolith stops writing. That keeps the critical write committed once, in one place, with legacy sync handled asynchronously but audibly.\\n\\nStage 5: Cut over background jobs and scheduled workflows. Renewal jobs, invoice generation, entitlement recalculation, and finance exports often hide the real coupling. Migrate them only after the new write model is stable and replay historical events into the new system to prove determinism.\\n\\nStage 6: Retire direct cluster reads, then split physically. Once a domain has owned writes, consumers read from domain APIs or projections, and reconciliation has been clean for a full operating cycle, move the physical database boundary. Until then, the logical split is more important than the hardware split.\\n\\nRule of thumb on mechanics: use CDC whenever you need multiple downstream consumers, auditability, or read-model construction. Use application dual-write only when the destination schema is simple, the write path is narrow, and drift can be detected and corrected automatically. For SOX-relevant billing records, prefer single-writer plus outbox over dual-write. For analytics and support, CDC is the default.\\n\\nThat path lets feature work continue because teams can redirect reads incrementally instead of waiting for every write path to be re-platformed first.",
+          "metadata": {
+            "stages": 6
+          }
+        }
+      ],
+      "timestamp": "2026-04-12T15:01:20Z",
+      "input_tokens": 0,
+      "output_tokens": 1400,
+      "cumulative_tokens": 2780
+    },
+    {
+      "turn_id": 4,
+      "parent_turn_id": 3,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "The distinction between moving reads first and moving write authority later is useful. I want to pressure-test the subscriptions path. Today renewals update subscription state, enqueue billing work, and sometimes fan out entitlement changes in the same transaction. If I avoid dual-write there, what exactly becomes the new system of record first? Also, if CDC feeds both support and analytics, how do I keep them from encoding business rules differently and drifting from billing semantics over time?",
+          "metadata": {
+            "focus": "subscriptions"
+          }
+        }
+      ],
+      "timestamp": "2026-04-12T15:02:04Z",
+      "input_tokens": 220,
+      "output_tokens": 0,
+      "cumulative_tokens": 3000
+    },
+    {
+      "turn_id": 5,
+      "parent_turn_id": 4,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "For subscriptions, the first thing to make authoritative is the state transition log, not every downstream table. In practice that means introducing a subscriptions service that owns a durable subscription ledger or event table representing renew, suspend, cancel, invoice-triggered-failure, entitlement-grant, and entitlement-revoke transitions. The service writes those transitions and its current-state tables in the same local transaction. Everything else derives from that.\\n\\nUnder that model, renewal execution moves first. The renewal worker stops mutating monolith tables directly and instead calls the subscriptions service. The subscriptions service commits the state change locally, writes an outbox record, and publishes events consumed by billing, entitlements, support projections, and analytics pipelines. The old monolith tables can remain populated temporarily by compatibility consumers if some code still depends on them, but those consumers are no longer authoritative.\\n\\nThat is safer than dual-writing the subscription renewal because it reduces the critical path to one committed write boundary. The tradeoff is that downstream consumers become eventually consistent. Whether that is acceptable depends on the SLA per consumer. Support usually tolerates a few seconds. Analytics tolerates more. Billing-triggered actions are trickier, so I would split them into two classes.\\n\\nClass 1 is financially binding records such as invoices, credits, tax adjustments, and revenue recognition inputs. Those should either be generated by the billing domain itself from the subscription event stream or triggered synchronously through a service contract when the subscription transition cannot be considered complete without billing acknowledgement.\\n\\nClass 2 is convenience projections such as dashboard counters, entitlement mirrors, CRM fields, or notification badges. Those should stay asynchronous and be rebuilt from the stream when needed.\\n\\nOn semantic drift: do not let every consumer reinterpret raw CDC rows independently. Define a governed domain event contract. The billing and subscriptions teams need to agree on canonical event meanings, versioning rules, nullability, and correction semantics. Support and analytics should consume curated domain events or sanctioned projections, not infer lifecycle state from low-level table churn. If you let them attach business meaning to raw row updates, they will diverge.\\n\\nThe practical control points are: one schema registry or event catalog, contract review in CI, a reference transformation library for common event decoding, and replay-based certification tests where support and analytics rebuild a slice of history and compare outputs against finance-approved results. That sounds heavy, but it is lighter than untangling three incompatible definitions of active subscription six months later.",
+          "metadata": {
+            "pattern": "single_writer_plus_outbox"
+          }
+        }
+      ],
+      "timestamp": "2026-04-12T15:02:49Z",
+      "input_tokens": 0,
+      "output_tokens": 1700,
+      "cumulative_tokens": 4700
+    },
+    {
+      "turn_id": 6,
+      "parent_turn_id": 5,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "That makes sense, but architecture review is going to ask why logical replication from PostgreSQL is not enough. Their default instinct is 'replicate the billing and subscriptions schemas into new clusters, switch app connections, and clean up the rest later.' I need a precise answer for what logical replication solves and what it does not solve in this plan.",
+          "metadata": {
+            "review_committee": true
+          }
+        }
+      ],
+      "timestamp": "2026-04-12T15:03:31Z",
+      "input_tokens": 180,
+      "output_tokens": 0,
+      "cumulative_tokens": 4880
+    },
+    {
+      "turn_id": 7,
+      "parent_turn_id": 6,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "Logical replication is an excellent transport mechanism, but it is not a domain-separation strategy by itself. It solves data movement and warm-standby style synchronization. It does not solve ownership, transaction boundary redesign, or semantic decoupling.\\n\\nWhat logical replication solves in your context:\\n1. It can copy selected tables with low impact and keep a target store warm for shadow reads or eventual cutover.\\n2. It provides rollback leverage because the target can be promoted or discarded while the source remains live.\\n3. It is useful for bulk backfill plus catch-up when table sizes are large and you need deterministic movement under audit.\\n4. It reduces the amount of application change required early in the program.\\n\\nWhat it does not solve:\\n1. If multiple teams still write overlapping tables or rely on cross-domain transactions, replication faithfully reproduces coupling in a second location.\\n2. It cannot decide which system owns side effects. If renewal in the old app triggers invoice creation and entitlement updates, replicating the rows elsewhere does not define where those actions should originate after cutover.\\n3. It does not remove cross-domain joins from application logic. You can replicate a schema and still have services making hidden assumptions about tables they should not read.\\n4. It does not automatically give you replayable, domain-level events for support and analytics. Replicated rows are implementation detail, not business contract.\\n\\nSo my answer to the review committee would be: use logical replication as a controlled migration primitive inside the broader strategy, especially for initial backfill and fast rollback, but do not confuse it with the actual decomposition. The real migration milestone is when a domain has a single write authority, downstream consumers use explicit contracts, and hidden joins are gone. Replication can help you reach that state; it cannot substitute for it.\\n\\nA useful sound bite is: replication moves bytes, not responsibility. If the committee wants something concrete, I would show a table where subscriptions uses replication for initial state transfer, CDC/outbox for downstream synchronization, and service APIs for authoritative writes. That makes the division of labor explicit rather than ideological.",
+          "metadata": {
+            "key_phrase": "moves_bytes_not_responsibility"
+          }
+        }
+      ],
+      "timestamp": "2026-04-12T15:03:49Z",
+      "input_tokens": 0,
+      "output_tokens": 1500,
+      "cumulative_tokens": 6380
+    },
+    {
+      "turn_id": 8,
+      "parent_turn_id": 7,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "Good. Now I need the failure-mode analysis. Our VP is especially worried about dual-write drift, cutover rollback, and backfill jobs stepping on live writes. Please walk through the main risks and tell me how the migration design contains them. I'd also like a view on whether support should read from a domain API or from a replicated customer-state projection during the transition.",
+          "metadata": {
+            "needs_risk_analysis": true
+          }
+        }
+      ],
+      "timestamp": "2026-04-12T15:04:27Z",
+      "input_tokens": 210,
+      "output_tokens": 0,
+      "cumulative_tokens": 6590
+    },
+    {
+      "turn_id": 9,
+      "parent_turn_id": 8,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "The main failure modes cluster into four groups.\\n\\nFirst, correctness drift. This is the classic dual-write problem: the legacy write succeeds, the new write fails, or the writes succeed in different orders and downstream readers observe contradictory states. The containment strategy is to minimize dual-write scope and duration. For subscriptions and billing, avoid dual-write on the critical record entirely. For less sensitive tables where you do dual-write temporarily, require three controls: idempotent write keys, a reconciliation job that compares source and target on a tight schedule, and an automatic downgrade path that disables the secondary write if divergence crosses a threshold. Dual-write without those controls is not a migration strategy; it is wishful thinking.\\n\\nSecond, cutover instability. The danger is switching reads or writes before the target has seen enough realistic load or before consumers are actually detached from the old path. The containment strategy is progressive exposure. Backfill first, then CDC catch-up, then shadow reads, then partial read cutover, then write cutover, then source deprecation. Every step needs explicit exit criteria: replication lag under a bounded threshold, consistency checks clean over a representative business cycle, query latency within budget, and zero unresolved contract violations.\\n\\nThird, backfill interference with live traffic. Bulk copy can trash I/O, bloat indexes, and starve renewal or billing workloads. Contain that by chunking backfills on stable keys or time windows, rate-limiting copy jobs, and measuring source-cluster pressure as a first-class SLO. If source load exceeds budget, the backfill slows automatically. Also use a high-water mark so the final catch-up phase is CDC-driven rather than a second full scan.\\n\\nFourth, rollback illusion. Teams often think rollback exists because the old database is still around, but once external side effects or downstream jobs have executed from the new source of truth, rollback becomes reconciliation work, not a toggle. The design contains that by making rollback asymmetric and explicit. Read rollback is easy: switch traffic back. Write rollback is only safe before the new writer has emitted irreversible side effects. After that point, rollback means compensating forward from the event log, not pretending nothing happened.\\n\\nOn support reads during transition, I would prefer a replicated customer-state projection over live domain API fan-out for the majority of support workflows. The reason is operational stability. Support tools often need a stitched view across billing, subscriptions, account status, and recent incidents. If you make the UI call multiple domain APIs during the migration, you create a fragile runtime dependency graph and expose support directly to partial outages. A curated projection fed from domain events gives fast reads, controlled freshness, and a single place to normalize semantics. The tradeoff is stale data risk, so give agents a freshness indicator and a 'refresh from source' action for rare cases that need the live domain API. That keeps the default path resilient while still allowing escalation when exact real-time state matters.",
+          "metadata": {
+            "risk_groups": 4
+          }
+        }
+      ],
+      "timestamp": "2026-04-12T15:05:11Z",
+      "input_tokens": 0,
+      "output_tokens": 1700,
+      "cumulative_tokens": 8290
+    },
+    {
+      "turn_id": 10,
+      "parent_turn_id": 9,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "I need a steering-committee-ready comparison now. Can you compare three concrete strategies: (1) schema-first plus CDC plus single-writer cutover, (2) application dual-write with fast service extraction, and (3) replication-led lift-and-shift with delayed domain cleanup? Score them on operational risk, implementation speed, auditability, rollback clarity, and long-term architecture quality, and then tell me which one you would actually approve.",
+          "metadata": {
+            "deliverable": "comparison_table"
+          }
+        }
+      ],
+      "timestamp": "2026-04-12T15:05:58Z",
+      "input_tokens": 170,
+      "output_tokens": 0,
+      "cumulative_tokens": 8460
+    },
+    {
+      "turn_id": 11,
+      "parent_turn_id": 10,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "Here is the comparison I would use, with 1 as weak and 5 as strong.\\n\\nStrategy 1: Schema-first plus CDC plus single-writer cutover. Operational risk: 4, because the migration is staged and high-risk domains can avoid dual-write on authoritative records. Implementation speed: 3, because there is upfront ownership work and projection plumbing. Auditability: 5, because state movement and cutover checkpoints are observable and replayable. Rollback clarity: 4, because read rollback is straightforward and write rollback boundaries are explicit. Long-term architecture quality: 5, because the program forces clear ownership and removes hidden joins.\\n\\nStrategy 2: Application dual-write with fast service extraction. Operational risk: 2, because correctness depends on application code keeping multiple systems aligned under failure. Implementation speed: 4 in the short term, because teams can move quickly when write paths are narrow. Auditability: 2 unless you add heavy reconciliation, because proving exactly what happened across partial failures is difficult. Rollback clarity: 2, because once writes diverge and side effects propagate, rollback is messy. Long-term architecture quality: 3, because you can achieve good separation, but teams often accumulate compatibility shims and never fully retire them.\\n\\nStrategy 3: Replication-led lift-and-shift with delayed domain cleanup. Operational risk: 3, because data movement itself is relatively mature, but the organization can underestimate unresolved coupling. Implementation speed: 4, because many changes are infrastructural rather than application-level at first. Auditability: 4, because replication and copy tooling are measurable. Rollback clarity: 3, because reverting connections is possible early, but ownership confusion persists. Long-term architecture quality: 2, because you frequently relocate the monolith's coupling rather than remove it.\\n\\nMy approval recommendation is Strategy 1, with a tactical use of replication as a sub-step rather than as the strategy. It is the only option that satisfies your audit constraints, gives a defensible answer on subscriptions and billing, and leaves the platform healthier instead of merely redistributed. Strategy 2 is acceptable only for low-risk, low-coupling domains such as support-side ancillary data. Strategy 3 is useful when you are primarily trying to exit a piece of infrastructure, but it is too weak as the centerpiece of a domain migration program.\\n\\nIf the committee asks why Strategy 1 is worth the extra setup, the answer is that it pays for certainty at the exact points where uncertainty is most expensive: billing correctness, rollback boundaries, and long-term governance of customer state. In your environment, those are not optional nice-to-haves.\\n\\nIf helpful, I can turn that into an executive recommendation with a 90-day plan and explicit no-big-bang language.",
+          "metadata": {
+            "approved_strategy": 1
+          }
+        }
+      ],
+      "timestamp": "2026-04-12T15:06:21Z",
+      "input_tokens": 0,
+      "output_tokens": 1500,
+      "cumulative_tokens": 9960
+    },
+    {
+      "turn_id": 12,
+      "parent_turn_id": 11,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "Yes. Final refinement: give me the 90-day version. I need milestones, staffing implications, and a sentence that explicitly says we are not approving a big-bang database migration. Keep it practical enough that engineering managers can map teams to it.",
+          "metadata": {
+            "asks_for_timeline": 90
+          }
+        }
+      ],
+      "timestamp": "2026-04-12T15:06:52Z",
+      "input_tokens": 140,
+      "output_tokens": 0,
+      "cumulative_tokens": 10100
+    },
+    {
+      "turn_id": 13,
+      "parent_turn_id": 12,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "Recommended executive position: We are not approving a big-bang database migration. We are approving an incremental domain-ownership program that uses schema isolation, CDC, controlled read cutovers, and single-writer transitions to reduce risk while preserving auditability.\\n\\nDay 0 to 30: establish control and visibility. Platform and data teams build the domain inventory, table ownership map, CDC pipeline foundations, and consistency dashboards. Billing and subscriptions teams identify authoritative write paths, side effects, and hidden joins. Engineering managers should assign one migration lead per domain plus a small shared enablement pod for CDC, schema tooling, and validation. The output for this month is not a moved database; it is a signed-off ownership model, a dependency register, and a production-like shadow feed for at least one customer-state projection.\\n\\nDay 31 to 60: move non-authoritative reads and prove parity. Support transitions to a replicated customer-state projection with freshness indicators. Analytics shifts the heaviest cross-schema reporting jobs to CDC-fed analytical models. Subscription and billing teams stand up the new domain service boundary, including the outbox, event contracts, and replay tests, but they do not yet cut over authoritative writes. Success criteria are reduced read load on the monolith cluster, clean parity checks, and agreement on canonical event semantics.\\n\\nDay 61 to 90: perform the first controlled authority transfer. Choose one bounded, high-value workflow inside subscriptions, such as renewal state transitions without finance-final posting, and move it behind the new single writer. Keep compatibility consumers updating legacy tables temporarily, measure divergence continuously, and define a clear stop condition if correctness or latency moves outside bounds. In parallel, retire at least one direct support read path and one analytics join path permanently so the organization sees coupling actually decreasing.\\n\\nStaffing model: a shared platform/data migration pod of roughly 5 to 7 engineers can own CDC infrastructure, schema policy, observability, and backfill tooling. Each domain participating in a quarter should dedicate 2 to 4 engineers who understand both the business rules and the existing failure modes. Do not spread one engineer across four domains; that guarantees stalled decisions. The EM-level commitment is less about raw headcount and more about preserving domain attention for three consecutive milestones.\\n\\nThe management tradeoff is straightforward. This plan is slower in the first month than a replication-only move, but it creates proof points every few weeks, reduces direct load on the monolith before the riskiest cutovers, and gives finance and audit stakeholders something they can actually sign. That is the plan I would approve.",
+          "metadata": {
+            "timeline_days": 90,
+            "contains_no_big_bang_statement": true
+          }
+        }
+      ],
+      "timestamp": "2026-04-12T15:07:18Z",
+      "input_tokens": 0,
+      "output_tokens": 1600,
+      "cumulative_tokens": 11700
+    }
+  ],
+  "replay": {
+    "prefix_group_id": "pg-db-migration-strategy-tradeoffs-001",
+    "prefix_overlap_ratio": 0.82,
+    "reuse_distance_turns": 3,
+    "reuse_distance_seconds": 165,
+    "estimated_kv_bytes_peak": 117440512,
+    "branch_count": 0,
+    "idle_windows_ms": [
+      0,
+      1000,
+      8000,
+      2000
+    ],
+    "arrival_pattern": "steady_interactive"
+  },
+  "kv_pressure": {
+    "cold_start": true,
+    "warm_cache_hit_rate": 0.74,
+    "estimated_offload_bytes": 8388608,
+    "estimated_reload_bytes": 4194304,
+    "tier": "HBM",
+    "cache_expectation": "warm",
+    "eviction_risk_score": 0.2
+  },
+  "provenance": {
+    "generator_model": "gpt-5-codex",
+    "generator_prompt_version": "v0.1.0",
+    "pipeline_version": "0.1.0"
+  }
+}
