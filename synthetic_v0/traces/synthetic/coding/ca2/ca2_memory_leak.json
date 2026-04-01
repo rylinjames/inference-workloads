@@ -1,0 +1,429 @@
+{
+  "trace_id": "st-coding-memleak-001",
+  "dataset_version": "0.1.0",
+  "source_type": "synthetic",
+  "workload_family": "coding",
+  "language": "en",
+  "tokenizer": {
+    "name": "Qwen/Qwen3-Coder-Next",
+    "version": "0.4.0"
+  },
+  "session": {
+    "session_id": "sess-memleak-debug-7a3f",
+    "goal": "Investigate and fix a memory leak using profiling output",
+    "contains_tools": true,
+    "contains_rag": true,
+    "contains_branching": false,
+    "contains_multimodal": false
+  },
+  "turns": [
+    {
+      "turn_id": 0,
+      "parent_turn_id": null,
+      "role": "system",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "You are a senior systems engineer debugging a memory leak in a high-throughput inference serving pipeline. The service runs vLLM workers behind a Dynamo frontend on H200 SXM GPUs. Use profiling tools, heap analysis, and code patches to identify and resolve the leak. Always verify fixes with a second profiling pass."
+        }
+      ],
+      "timestamp": "2026-03-31T14:00:00Z",
+      "input_tokens": 189,
+      "output_tokens": 0,
+      "cumulative_tokens": 189
+    },
+    {
+      "turn_id": 1,
+      "parent_turn_id": 0,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "Our inference gateway has been leaking memory for the past 48 hours. RSS grows ~200MB/hour on the Dynamo frontend pod. We've narrowed it down to the request routing layer but haven't pinpointed the root cause. The pod OOMKills every 18 hours. Here's our service topology:\n\n- Dynamo frontend (dynamo-frontend-0): routes incoming requests, manages KV cache metadata, handles disaggregated prefill/decode scheduling\n- 4x vLLM workers (worker-0 through worker-3): H200 SXM, TP=4 per worker\n- Grove KV tiering: HBM \u2192 CPU DRAM \u2192 NVMe\n- LMCache enabled with prefix dedup\n\nThe leak does NOT appear on the workers, only the frontend. We suspect it's in the request lifecycle tracking or KV metadata bookkeeping. Can you help investigate?"
+        },
+        {
+          "type": "text",
+          "text": "Relevant config:\n```yaml\ndynamo:\n  frontend:\n    max_inflight_requests: 2048\n    routing_strategy: least_load\n    kv_metadata_ttl_seconds: 300\n    request_tracking:\n      enabled: true\n      gc_interval_seconds: 60\n      max_completed_entries: 10000\n  grove:\n    tiers: [gpu, cpu, nvme]\n    eviction_policy: lru\n    metadata_sync_interval_ms: 500\n```"
+        }
+      ],
+      "timestamp": "2026-03-31T14:00:12Z",
+      "input_tokens": 2728,
+      "output_tokens": 0,
+      "cumulative_tokens": 2917
+    },
+    {
+      "turn_id": 2,
+      "parent_turn_id": 1,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "This is a classic frontend-side metadata leak pattern. The 200MB/hour growth rate combined with the `kv_metadata_ttl_seconds: 300` and `max_completed_entries: 10000` settings suggests one of these scenarios:\n\n1. **Request tracking entries not being GC'd** \u2014 completed request metadata accumulates beyond the 10K cap because the GC sweep misses entries in certain states (e.g., partially completed disaggregated requests where prefill succeeded but decode was rerouted)\n2. **Grove metadata sync accumulation** \u2014 the 500ms sync interval creates KV metadata snapshots that reference stale tier mappings, and the TTL expiry doesn't cascade to dependent objects\n3. **NIXL transfer callback leak** \u2014 async callbacks for KV transfers between prefill/decode workers hold references to request context objects\n\nLet me start by pulling profiling documentation for the Dynamo frontend's memory subsystem, then we'll run a targeted heap profile."
+        },
+        {
+          "type": "text",
+          "text": "**Investigation plan:**\n1. Pull profiling docs for `memray` integration with Dynamo\n2. Attach `memray` to the live frontend process for a 10-minute capture\n3. Analyze the flamegraph and top allocators\n4. Take a heap dump and diff against a baseline\n5. Identify the leaking object graph\n6. Patch the root cause\n7. Verify with a second profiling pass"
+        }
+      ],
+      "timestamp": "2026-03-31T14:00:30Z",
+      "input_tokens": 0,
+      "output_tokens": 3185,
+      "cumulative_tokens": 6102
+    },
+    {
+      "turn_id": 3,
+      "parent_turn_id": 2,
+      "role": "retrieval",
+      "content_blocks": [
+        {
+          "type": "document",
+          "text": "# Dynamo Frontend Memory Profiling Guide\n\n## Overview\nThe Dynamo frontend process manages request lifecycle state, KV cache metadata indices, and NIXL transfer coordination. Memory profiling is critical for long-running deployments.\n\n## Using memray with Dynamo\n\n### Attach to running process\n```bash\nmemray attach --pid $(pgrep -f dynamo-frontend) --duration 600 -o /tmp/frontend_profile.bin\n```\n\n### Generate flamegraph\n```bash\nmemray flamegraph /tmp/frontend_profile.bin -o /tmp/frontend_flame.html\n```\n\n### Top allocators report\n```bash\nmemray stats /tmp/frontend_profile.bin --top 50\n```\n\n## Known Memory-Sensitive Subsystems\n\n### 1. RequestTracker (dynamo/frontend/request_tracker.py)\n- Maintains `_active_requests: dict[str, RequestContext]` and `_completed_log: deque[CompletedEntry]`\n- `RequestContext` holds references to: prompt tokens, KV cache slot assignments, routing decisions, timing metadata\n- GC sweep runs every `gc_interval_seconds` and evicts entries from `_completed_log` beyond `max_completed_entries`\n- **Known issue (v0.9.x):** Disaggregated requests create TWO entries in `_active_requests` (one for prefill phase, one for decode phase) keyed by `{request_id}:prefill` and `{request_id}:decode`. The GC only removes the base `request_id` key on completion, leaving orphaned phase-specific entries.\n\n### 2. KVMetadataIndex (dynamo/frontend/kv_metadata.py)\n- In-memory index of KV cache block locations across Grove tiers\n- Each entry: `KVBlockMeta(block_id, tier, worker_id, size_bytes, created_at, last_accessed, prefix_hash)`\n- TTL-based expiry via `kv_metadata_ttl_seconds`\n- **Known issue:** `prefix_hash` collision chains are not cleaned up when the parent block is evicted. Collision chain entries hold 2KB each.\n\n### 3. NIXLCallbackRegistry (dynamo/frontend/nixl_callbacks.py)\n- Registers async callbacks for KV transfer completion events\n- Each callback closure captures: source worker context, destination worker context, transfer metadata, request context reference\n- **Known issue:** Failed transfers (timeout or NIXL error) invoke the error handler but do NOT deregister the original success callback. The callback closure retains the full request context (~8KB per request).\n\n## Heap Dump Analysis\n\n### Take a heap dump\n```bash\nmemray dump-heap --pid $(pgrep -f dynamo-frontend) -o /tmp/frontend_heap.json\n```\n\n### Object type breakdown\n```bash\njq '.objects | group_by(.type) | map({type: .[0].type, count: length, total_bytes: (map(.size) | add)}) | sort_by(-.total_bytes) | .[:20]' /tmp/frontend_heap.json\n```\n\n## Reference Cycle Detection\nDynamo uses weak references for cross-subsystem links. If strong reference cycles form between RequestContext \u2194 KVBlockMeta \u2194 NIXLCallback, the cyclic GC may not collect them promptly. Use `objgraph` for reference graph visualization:\n```python\nimport objgraph\nobjgraph.show_backrefs(objgraph.by_type('RequestContext')[:5], filename='/tmp/request_refs.png')\n```\n\n## Recommended Thresholds\n- RequestTracker active entries: \u2264 max_inflight_requests (2048)\n- KVMetadataIndex size: \u2264 500K entries for 4-worker cluster\n- NIXLCallbackRegistry pending: \u2264 inflight requests \u00d7 2 (for prefill+decode)\n- Total frontend RSS: \u2264 4GB for standard deployment",
+          "metadata": {
+            "source": "dynamo-docs/memory-profiling.md",
+            "retrieved_at": "2026-03-31T14:00:35Z",
+            "relevance_score": 0.96
+          }
+        }
+      ],
+      "timestamp": "2026-03-31T14:00:35Z",
+      "input_tokens": 6222,
+      "output_tokens": 0,
+      "cumulative_tokens": 12324
+    },
+    {
+      "turn_id": 4,
+      "parent_turn_id": 3,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "The profiling docs confirm all three of my hypotheses are known issues. Let me summarize the prime suspects:\n\n1. **RequestTracker orphaned phase entries** \u2014 disaggregated requests create `{id}:prefill` and `{id}:decode` keys, but GC only removes the base `{id}` key. Each orphan retains the full `RequestContext` (~8KB with token references).\n\n2. **KVMetadataIndex prefix_hash collision chains** \u2014 evicted blocks leave behind 2KB collision chain entries that accumulate indefinitely.\n\n3. **NIXLCallbackRegistry stale callbacks** \u2014 failed NIXL transfers leave success callbacks registered, each holding ~8KB of request context.\n\nGiven your 200MB/hour growth rate, let's do the math:\n- At ~500 requests/minute (typical coding workload), with maybe 2% disaggregated routing failures and 0.5% NIXL timeouts:\n  - RequestTracker: 500 \u00d7 0.02 \u00d7 60 \u00d7 8KB = ~4.8MB/hour (orphaned phase entries)\n  - NIXL callbacks: 500 \u00d7 0.005 \u00d7 60 \u00d7 8KB = ~1.2MB/hour\n  - KV metadata collisions: harder to estimate without knowing collision rate\n\nThat only accounts for ~6MB/hour. The 200MB/hour suggests either the leak rate is higher than expected OR there's an additional accumulation path. Let's profile to get ground truth.\n\nRunning memray now \u2014 attaching for a 10-minute capture on the frontend process."
+        }
+      ],
+      "timestamp": "2026-03-31T14:01:00Z",
+      "input_tokens": 0,
+      "output_tokens": 2488,
+      "cumulative_tokens": 14812
+    },
+    {
+      "turn_id": 5,
+      "parent_turn_id": 4,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "Good analysis. I've attached memray to the frontend. Here's the 10-minute capture. Run the stats report and show me the top allocators."
+        }
+      ],
+      "timestamp": "2026-03-31T14:11:30Z",
+      "input_tokens": 562,
+      "output_tokens": 0,
+      "cumulative_tokens": 15374
+    },
+    {
+      "turn_id": 6,
+      "parent_turn_id": 5,
+      "role": "tool",
+      "content_blocks": [
+        {
+          "type": "log",
+          "text": "$ memray stats /tmp/frontend_profile.bin --top 30\n\n\ud83d\udcca Memray Stats Report\nCapture duration: 600.2s\nTotal allocations: 14,832,019\nTotal memory allocated: 1,247.3 MiB\nTotal memory freed: 1,044.1 MiB\nNet memory growth: 203.2 MiB\n\nTop allocators by net growth (allocated - freed):\n\n  #  \u2502 Net Growth \u2502  Allocs  \u2502  Frees  \u2502 Location\n\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  1  \u2502  98.4 MiB  \u2502 312,847  \u2502  41,203 \u2502 dynamo/frontend/request_tracker.py:187 RequestTracker._register_phase_entry\n  2  \u2502  52.1 MiB  \u2502 148,302  \u2502  12,888 \u2502 dynamo/frontend/kv_metadata.py:342 KVMetadataIndex._update_collision_chain\n  3  \u2502  31.7 MiB  \u2502  89,441  \u2502   5,102 \u2502 dynamo/frontend/nixl_callbacks.py:94 NIXLCallbackRegistry.register_transfer_callback\n  4  \u2502   8.9 MiB  \u2502 201,445  \u2502 192,301 \u2502 dynamo/frontend/router.py:156 Router._build_routing_context\n  5  \u2502   4.2 MiB  \u2502  53,201  \u2502  48,770 \u2502 dynamo/frontend/request_tracker.py:221 RequestTracker._snapshot_timing_metadata\n  6  \u2502   3.1 MiB  \u2502 1,203,445\u25021,198,220\u2502 dynamo/frontend/kv_metadata.py:198 KVMetadataIndex.lookup_block\n  7  \u2502   2.4 MiB  \u2502  44,102  \u2502  41,008 \u2502 dynamo/frontend/grove_sync.py:67 GroveSyncAgent._ingest_tier_update\n  8  \u2502   1.2 MiB  \u2502  88,301  \u2502  87,044 \u2502 dynamo/frontend/scheduler.py:312 DisaggScheduler._assign_decode_worker\n  9  \u2502   0.8 MiB  \u2502  22,109  \u2502  21,401 \u2502 dynamo/frontend/nixl_callbacks.py:142 NIXLCallbackRegistry._build_error_context\n 10  \u2502   0.4 MiB  \u2502 4,501,002\u25024,500,188\u2502 dynamo/frontend/metrics.py:45 MetricsCollector.record_request_metric\n 11  \u2502   0.1 MiB  \u2502  11,203  \u2502  11,100 \u2502 dynamo/frontend/auth.py:23 AuthMiddleware._validate_token_cache\n 12  \u2502   0.0 MiB  \u2502 8,123,401\u25028,123,401\u2502 dynamo/frontend/protocol.py:89 ProtocolHandler.parse_streaming_chunk\n\nTotal net growth in top 12: 203.3 MiB (matches observed delta)\n\nObject lifetime analysis:\n  - RequestTracker phase entries: median lifetime = INFINITE (never freed)\n  - KVMetadataIndex collision chains: median lifetime = INFINITE (never freed)\n  - NIXLCallback stale registrations: median lifetime = INFINITE (never freed)\n  - Router contexts: median lifetime = 2.3s (normal, GC working)\n  - Timing snapshots: median lifetime = 48.1s (slightly elevated)",
+          "metadata": {
+            "tool": "memray",
+            "command": "memray stats /tmp/frontend_profile.bin --top 30",
+            "exit_code": 0,
+            "duration_seconds": 12.4
+          }
+        },
+        {
+          "type": "text",
+          "text": "Profiler run completed. The net growth of 203.2 MiB over 600 seconds extrapolates to ~203.2 * 6 = 1,219 MiB/hour, which is significantly higher than the previously reported 200MB/hour. This suggests the leak rate has accelerated \u2014 possibly due to increased request volume or a threshold effect in collision chain growth."
+        }
+      ],
+      "timestamp": "2026-03-31T14:12:00Z",
+      "input_tokens": 8592,
+      "output_tokens": 0,
+      "cumulative_tokens": 23966
+    },
+    {
+      "turn_id": 7,
+      "parent_turn_id": 6,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "The profiling data is conclusive. Three distinct leaks, all with `INFINITE` median lifetimes:\n\n| Rank | Leak Source | Net Growth (10min) | Extrapolated/hour |\n|------|-----------|-------------------|-------------------|\n| 1 | `RequestTracker._register_phase_entry` | 98.4 MiB | ~590 MiB |\n| 2 | `KVMetadataIndex._update_collision_chain` | 52.1 MiB | ~313 MiB |\n| 3 | `NIXLCallbackRegistry.register_transfer_callback` | 31.7 MiB | ~190 MiB |\n\nThe leak rate has accelerated from your reported 200MB/hour to over 1.2GB/hour \u2014 this is likely compounding: as collision chains grow, lookup times increase, which backs up the request pipeline, which creates more orphaned phase entries.\n\n**Critical finding:** The RequestTracker leak is the biggest contributor at 48% of total growth. 312,847 allocations vs only 41,203 frees in 10 minutes means ~271K orphaned phase entries accumulated. At ~380 bytes each for the phase key + reference, that's the 98.4 MiB.\n\nLet's take a heap dump to confirm the object graph and see the actual reference chains keeping these alive."
+        },
+        {
+          "type": "text",
+          "text": "I also note that `Router._build_routing_context` at #4 (8.9 MiB) has a much healthier alloc/free ratio but is still net-positive. This could be a secondary issue \u2014 routing contexts might be held alive by references from the orphaned RequestTracker entries. We'll see in the heap dump."
+        }
+      ],
+      "timestamp": "2026-03-31T14:12:30Z",
+      "input_tokens": 0,
+      "output_tokens": 3111,
+      "cumulative_tokens": 27077
+    },
+    {
+      "turn_id": 8,
+      "parent_turn_id": 7,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "Makes sense. The acceleration explains why OOMKill timing has been getting shorter \u2014 ops reported the interval dropped from 18h to about 12h over the past week. Take the heap dump and let's see the object graph."
+        }
+      ],
+      "timestamp": "2026-03-31T14:13:00Z",
+      "input_tokens": 770,
+      "output_tokens": 0,
+      "cumulative_tokens": 27847
+    },
+    {
+      "turn_id": 9,
+      "parent_turn_id": 8,
+      "role": "tool",
+      "content_blocks": [
+        {
+          "type": "log",
+          "text": "$ memray dump-heap --pid 48291 -o /tmp/frontend_heap.json\nHeap dump written to /tmp/frontend_heap.json (247 MiB)\n\n$ jq '.objects | group_by(.type) | map({type: .[0].type, count: length, total_bytes: (map(.size) | add)}) | sort_by(-.total_bytes) | .[:20]' /tmp/frontend_heap.json\n\n[\n  {\"type\": \"RequestContext\",       \"count\": 891204,  \"total_bytes\": 684523872},\n  {\"type\": \"PhaseEntry\",           \"count\": 742891,  \"total_bytes\": 282298580},\n  {\"type\": \"KVBlockMeta\",          \"count\": 1203447, \"total_bytes\": 192551520},\n  {\"type\": \"CollisionChainNode\",   \"count\": 523019,  \"total_bytes\": 104603800},\n  {\"type\": \"NIXLTransferCallback\", \"count\": 198442,  \"total_bytes\":  79376800},\n  {\"type\": \"RoutingDecision\",      \"count\": 891204,  \"total_bytes\":  71296320},\n  {\"type\": \"TimingMetadata\",       \"count\": 891204,  \"total_bytes\":  57036656},\n  {\"type\": \"TokenSlice\",           \"count\": 2438812, \"total_bytes\":  48776240},\n  {\"type\": \"KVSlotAssignment\",     \"count\": 891204,  \"total_bytes\":  42777792},\n  {\"type\": \"TransferMetadata\",     \"count\": 198442,  \"total_bytes\":  15875360},\n  {\"type\": \"WorkerContext\",        \"count\": 396884,  \"total_bytes\":  12700288},\n  {\"type\": \"PrefixHash\",           \"count\": 523019,  \"total_bytes\":   8368304},\n  {\"type\": \"ErrorContext\",         \"count\":  44102,  \"total_bytes\":   3528160},\n  {\"type\": \"str\",                  \"count\": 5891022, \"total_bytes\":  289120400},\n  {\"type\": \"dict\",                 \"count\": 3102445, \"total_bytes\":  248195600},\n  {\"type\": \"list\",                 \"count\": 1204891, \"total_bytes\":   48195640},\n  {\"type\": \"tuple\",                \"count\":  982103, \"total_bytes\":   31427296},\n  {\"type\": \"bytes\",                \"count\":  441203, \"total_bytes\":   88240600},\n  {\"type\": \"weakref\",              \"count\":  112044, \"total_bytes\":    5378112},\n  {\"type\": \"deque\",                \"count\":    4201, \"total_bytes\":     537728}\n]\n\n$ jq '.reference_chains | .[:5]' /tmp/frontend_heap.json\n\n[\n  {\n    \"root\": \"RequestTracker._active_requests\",\n    \"chain\": [\"dict\", \"PhaseEntry\", \"RequestContext\", \"RoutingDecision\", \"TokenSlice[]\"],\n    \"retained_bytes\": 684523872,\n    \"note\": \"PhaseEntry objects keyed as '{request_id}:prefill' and '{request_id}:decode' retain full RequestContext even after request completion\"\n  },\n  {\n    \"root\": \"KVMetadataIndex._collision_chains\",\n    \"chain\": [\"dict\", \"list[CollisionChainNode]\", \"PrefixHash\", \"KVBlockMeta(evicted)\"],\n    \"retained_bytes\": 104603800,\n    \"note\": \"CollisionChainNode entries reference evicted KVBlockMeta objects via strong reference instead of weakref\"\n  },\n  {\n    \"root\": \"NIXLCallbackRegistry._pending_callbacks\",\n    \"chain\": [\"dict\", \"NIXLTransferCallback\", \"closure\", \"RequestContext\", \"WorkerContext\u00d72\"],\n    \"retained_bytes\": 79376800,\n    \"note\": \"Success callbacks for failed transfers never deregistered; closure captures full request + worker contexts\"\n  },\n  {\n    \"root\": \"RequestTracker._active_requests \u2192 RequestContext\",\n    \"chain\": [\"RequestContext\", \"KVSlotAssignment\", \"KVBlockMeta\"],\n    \"retained_bytes\": 42777792,\n    \"note\": \"Cross-reference from leaked RequestContext to KVBlockMeta prevents tier eviction metadata cleanup\"\n  },\n  {\n    \"root\": \"NIXLCallbackRegistry._pending_callbacks \u2192 WorkerContext\",\n    \"chain\": [\"WorkerContext\", \"TransferMetadata\", \"RequestContext\"],\n    \"retained_bytes\": 15875360,\n    \"note\": \"Bidirectional reference: WorkerContext \u2192 TransferMetadata \u2192 RequestContext \u2192 (back to PhaseEntry in RequestTracker)\"\n  }\n]",
+          "metadata": {
+            "tool": "memray+jq",
+            "commands": [
+              "memray dump-heap",
+              "jq object breakdown",
+              "jq reference chains"
+            ],
+            "exit_code": 0
+          }
+        }
+      ],
+      "timestamp": "2026-03-31T14:13:30Z",
+      "input_tokens": 10666,
+      "output_tokens": 0,
+      "cumulative_tokens": 38513
+    },
+    {
+      "turn_id": 10,
+      "parent_turn_id": 9,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "The heap dump reveals the full picture. Here's the damage report:\n\n**891,204 leaked RequestContext objects** \u2014 this is the headline number. Each one is retained by orphaned PhaseEntry keys in `_active_requests`. These in turn hold RoutingDecision, TokenSlice, KVSlotAssignment, and TimingMetadata objects, creating a massive retained graph totaling ~650 MiB.\n\n**Reference chain analysis:**\n\n```\nRequestTracker._active_requests\n  \u2514\u2500 PhaseEntry (key: \"{id}:prefill\" or \"{id}:decode\")\n      \u2514\u2500 RequestContext (8KB each \u00d7 891K = 650+ MiB)\n          \u251c\u2500 RoutingDecision\n          \u251c\u2500 TokenSlice[] (prompt token references)\n          \u251c\u2500 KVSlotAssignment \u2192 KVBlockMeta (cross-ref prevents KV cleanup)\n          \u2514\u2500 TimingMetadata\n```\n\n**Three independent leaks, one amplification loop:**\n1. PhaseEntry orphans (primary, ~650 MiB retained)\n2. CollisionChainNode orphans (~100 MiB, strong refs to evicted KVBlockMeta)\n3. NIXLTransferCallback orphans (~80 MiB, captures full request context)\n4. Cross-reference amplifier: leaked RequestContext \u2192 KVSlotAssignment \u2192 KVBlockMeta prevents the KV metadata TTL from cleaning up those blocks, which in turn grows the collision chain problem\n\nThe fix needs to address all three leak sites. Let me write the patches."
+        },
+        {
+          "type": "text",
+          "text": "**Root cause summary:**\n- `RequestTracker._gc_sweep()` iterates `_completed_log` and deletes the base `request_id` key from `_active_requests`, but never checks for or deletes the `{request_id}:prefill` and `{request_id}:decode` phase keys\n- `KVMetadataIndex._evict_block()` removes the block from the tier index but doesn't clean up collision chain entries that reference it, using strong refs instead of weakrefs\n- `NIXLCallbackRegistry._handle_transfer_error()` invokes the error callback but doesn't call `deregister_callback()` for the corresponding success callback"
+        }
+      ],
+      "timestamp": "2026-03-31T14:14:00Z",
+      "input_tokens": 0,
+      "output_tokens": 4148,
+      "cumulative_tokens": 42661
+    },
+    {
+      "turn_id": 11,
+      "parent_turn_id": 10,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "Crystal clear. Write the patches for all three. Prioritize the RequestTracker fix since it's the biggest contributor. Make sure the patches are minimal and surgical \u2014 we need to hotfix this in production without a full redeploy."
+        }
+      ],
+      "timestamp": "2026-03-31T14:14:30Z",
+      "input_tokens": 711,
+      "output_tokens": 0,
+      "cumulative_tokens": 43372
+    },
+    {
+      "turn_id": 12,
+      "parent_turn_id": 11,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "Here are the three patches, ordered by impact:\n\n**Patch 1: RequestTracker \u2014 Fix orphaned phase entry cleanup (98.4 MiB/10min)**"
+        },
+        {
+          "type": "code",
+          "text": "--- a/dynamo/frontend/request_tracker.py\n+++ b/dynamo/frontend/request_tracker.py\n@@ -245,8 +245,16 @@ class RequestTracker:\n     def _gc_sweep(self) -> int:\n         \"\"\"Remove completed request entries beyond the retention cap.\"\"\"\n         evicted = 0\n         while len(self._completed_log) > self._max_completed:\n             entry = self._completed_log.popleft()\n-            self._active_requests.pop(entry.request_id, None)\n+            base_id = entry.request_id\n+            self._active_requests.pop(base_id, None)\n+            # Clean up disaggregated phase entries that reference this request.\n+            # These are keyed as \"{request_id}:prefill\" and \"{request_id}:decode\"\n+            # and retain the full RequestContext if not explicitly removed.\n+            for phase in (\"prefill\", \"decode\"):\n+                phase_key = f\"{base_id}:{phase}\"\n+                ctx = self._active_requests.pop(phase_key, None)\n+                if ctx is not None:\n+                    ctx.release()  # Break reference to KVSlotAssignment\n             evicted += 1\n         return evicted\n@@ -186,6 +186,17 @@ class RequestTracker:\n     def _register_phase_entry(self, request_id: str, phase: str, ctx: RequestContext) -> None:\n         phase_key = f\"{request_id}:{phase}\"\n         self._active_requests[phase_key] = PhaseEntry(\n             request_id=request_id,\n             phase=phase,\n             context=ctx,\n             created_at=time.monotonic(),\n         )\n+\n+    def complete_request(self, request_id: str) -> None:\n+        \"\"\"Mark request complete and eagerly clean up phase entries.\"\"\"\n+        for phase in (\"prefill\", \"decode\"):\n+            phase_key = f\"{request_id}:{phase}\"\n+            ctx_entry = self._active_requests.pop(phase_key, None)\n+            if ctx_entry is not None:\n+                ctx_entry.context.release()\n+        base_entry = self._active_requests.pop(request_id, None)\n+        if base_entry is not None:\n+            self._completed_log.append(CompletedEntry(\n+                request_id=request_id,\n+                completed_at=time.monotonic(),\n+            ))",
+          "metadata": {
+            "language": "python",
+            "filename": "request_tracker.py"
+          }
+        },
+        {
+          "type": "text",
+          "text": "**Patch 2: KVMetadataIndex \u2014 Use weakrefs for collision chain entries (52.1 MiB/10min)**"
+        },
+        {
+          "type": "code",
+          "text": "--- a/dynamo/frontend/kv_metadata.py\n+++ b/dynamo/frontend/kv_metadata.py\n@@ -1,4 +1,5 @@\n import time\n+import weakref\n from dataclasses import dataclass, field\n from typing import Optional\n \n@@ -338,10 +339,12 @@ class KVMetadataIndex:\n \n     def _update_collision_chain(self, prefix_hash: str, block: KVBlockMeta) -> None:\n         \"\"\"Add block to prefix hash collision chain for dedup lookups.\"\"\"\n         if prefix_hash not in self._collision_chains:\n             self._collision_chains[prefix_hash] = []\n-        self._collision_chains[prefix_hash].append(\n-            CollisionChainNode(prefix_hash=prefix_hash, block=block)\n+        # Use weakref to avoid retaining evicted blocks. The collision chain\n+        # entry becomes a dead reference when the block is evicted from tiers.\n+        self._collision_chains[prefix_hash].append(\n+            CollisionChainNode(prefix_hash=prefix_hash, block_ref=weakref.ref(block))\n         )\n \n@@ -355,6 +358,11 @@ class KVMetadataIndex:\n     def _evict_block(self, block_id: str) -> None:\n         block = self._blocks.pop(block_id, None)\n         if block is None:\n             return\n         self._tier_index[block.tier].discard(block_id)\n+        # Prune dead weakrefs from collision chain\n+        chain = self._collision_chains.get(block.prefix_hash, [])\n+        self._collision_chains[block.prefix_hash] = [\n+            node for node in chain if node.block_ref() is not None\n+        ]\n         self._stats.evictions += 1",
+          "metadata": {
+            "language": "python",
+            "filename": "kv_metadata.py"
+          }
+        },
+        {
+          "type": "text",
+          "text": "**Patch 3: NIXLCallbackRegistry \u2014 Deregister success callback on transfer failure (31.7 MiB/10min)**"
+        },
+        {
+          "type": "code",
+          "text": "--- a/dynamo/frontend/nixl_callbacks.py\n+++ b/dynamo/frontend/nixl_callbacks.py\n@@ -130,8 +130,14 @@ class NIXLCallbackRegistry:\n     def _handle_transfer_error(\n         self, transfer_id: str, error: NIXLTransferError\n     ) -> None:\n         \"\"\"Handle NIXL transfer failure.\"\"\"\n         error_ctx = self._build_error_context(transfer_id, error)\n         error_cb = self._error_callbacks.pop(transfer_id, None)\n         if error_cb is not None:\n             error_cb(error_ctx)\n-        # BUG: success callback is never deregistered here\n+        # Deregister the success callback to release captured RequestContext\n+        # and WorkerContext references held in the closure.\n+        success_cb = self._pending_callbacks.pop(transfer_id, None)\n+        if success_cb is not None:\n+            # Break closure references explicitly\n+            if hasattr(success_cb, '__closure__') and success_cb.__closure__:\n+                for cell in success_cb.__closure__:\n+                    try:\n+                        cell.cell_contents = None\n+                    except (ValueError, AttributeError):\n+                        pass  # cell is empty or immutable\n         self._stats.transfer_failures += 1\n         logger.warning(\n             \"nixl_transfer_failed\",",
+          "metadata": {
+            "language": "python",
+            "filename": "nixl_callbacks.py"
+          }
+        }
+      ],
+      "timestamp": "2026-03-31T14:15:30Z",
+      "input_tokens": 0,
+      "output_tokens": 12148,
+      "cumulative_tokens": 55520
+    },
+    {
+      "turn_id": 13,
+      "parent_turn_id": 12,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "Patches look good. I've applied all three to the running frontend via hot-reload. Let me run a second memray capture to verify the fix. Attaching now for another 10-minute window."
+        }
+      ],
+      "timestamp": "2026-03-31T14:16:00Z",
+      "input_tokens": 651,
+      "output_tokens": 0,
+      "cumulative_tokens": 56171
+    },
+    {
+      "turn_id": 14,
+      "parent_turn_id": 13,
+      "role": "tool",
+      "content_blocks": [
+        {
+          "type": "log",
+          "text": "$ memray stats /tmp/frontend_profile_post_fix.bin --top 30\n\n\ud83d\udcca Memray Stats Report (POST-FIX)\nCapture duration: 600.1s\nTotal allocations: 14,901,223\nTotal memory allocated: 1,189.7 MiB\nTotal memory freed: 1,186.4 MiB\nNet memory growth: 3.3 MiB\n\nTop allocators by net growth (allocated - freed):\n\n  #  \u2502 Net Growth \u2502  Allocs  \u2502  Frees  \u2502 Location\n\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  1  \u2502   1.1 MiB  \u2502 201,887  \u2502 200,102 \u2502 dynamo/frontend/router.py:156 Router._build_routing_context\n  2  \u2502   0.8 MiB  \u2502  53,441  \u2502  52,890 \u2502 dynamo/frontend/request_tracker.py:221 RequestTracker._snapshot_timing_metadata\n  3  \u2502   0.5 MiB  \u2502 1,198,002\u25021,197,200\u2502 dynamo/frontend/kv_metadata.py:198 KVMetadataIndex.lookup_block\n  4  \u2502   0.4 MiB  \u2502  44,203  \u2502  43,880 \u2502 dynamo/frontend/grove_sync.py:67 GroveSyncAgent._ingest_tier_update\n  5  \u2502   0.3 MiB  \u2502 4,488,901\u25024,488,500\u2502 dynamo/frontend/metrics.py:45 MetricsCollector.record_request_metric\n  6  \u2502   0.1 MiB  \u2502  88,102  \u2502  88,001 \u2502 dynamo/frontend/scheduler.py:312 DisaggScheduler._assign_decode_worker\n  7  \u2502   0.1 MiB  \u2502  11,301  \u2502  11,288 \u2502 dynamo/frontend/auth.py:23 AuthMiddleware._validate_token_cache\n  8  \u2502   0.0 MiB  \u2502 8,201,402\u25028,201,402\u2502 dynamo/frontend/protocol.py:89 ProtocolHandler.parse_streaming_chunk\n  9  \u2502   0.0 MiB  \u2502     412  \u2502     380 \u2502 dynamo/frontend/request_tracker.py:187 RequestTracker._register_phase_entry\n 10  \u2502   0.0 MiB  \u2502     203  \u2502     198 \u2502 dynamo/frontend/kv_metadata.py:342 KVMetadataIndex._update_collision_chain\n 11  \u2502   0.0 MiB  \u2502      89  \u2502      84 \u2502 dynamo/frontend/nixl_callbacks.py:94 NIXLCallbackRegistry.register_transfer_callback\n\nTotal net growth in top 11: 3.3 MiB (matches observed delta)\n\nObject lifetime analysis:\n  - RequestTracker phase entries: median lifetime = 2.1s (FIXED - was INFINITE)\n  - KVMetadataIndex collision chains: median lifetime = 4.8s (FIXED - was INFINITE)\n  - NIXLCallback registrations: median lifetime = 1.9s (FIXED - was INFINITE)\n  - Router contexts: median lifetime = 2.3s (unchanged, normal)\n  - Timing snapshots: median lifetime = 12.4s (improved from 48.1s)\n\nComparison with pre-fix baseline:\n  Net growth reduction: 203.2 MiB \u2192 3.3 MiB (98.4% reduction)\n  Leak sources neutralized: 3/3\n  Remaining growth: within normal operational variance (buffering, caches)",
+          "metadata": {
+            "tool": "memray",
+            "command": "memray stats /tmp/frontend_profile_post_fix.bin --top 30",
+            "exit_code": 0,
+            "duration_seconds": 11.8
+          }
+        }
+      ],
+      "timestamp": "2026-03-31T14:26:30Z",
+      "input_tokens": 8000,
+      "output_tokens": 0,
+      "cumulative_tokens": 64171
+    },
+    {
+      "turn_id": 15,
+      "parent_turn_id": 14,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "All three leaks are confirmed fixed:\n\n| Leak Source | Before (10min) | After (10min) | Reduction |\n|-------------|---------------|--------------|----------|\n| RequestTracker phase entries | 98.4 MiB | 0.0 MiB | 100% |\n| KVMetadataIndex collision chains | 52.1 MiB | 0.0 MiB | 100% |\n| NIXLCallbackRegistry stale callbacks | 31.7 MiB | 0.0 MiB | 100% |\n| **Total net growth** | **203.2 MiB** | **3.3 MiB** | **98.4%** |\n\nKey improvements:\n- Phase entry lifetime dropped from INFINITE \u2192 2.1s (matching normal request lifecycle)\n- Collision chain lifetime dropped from INFINITE \u2192 4.8s (matching KV block TTL)\n- NIXL callback lifetime dropped from INFINITE \u2192 1.9s (matching transfer completion)\n- Timing snapshot lifetime improved from 48.1s \u2192 12.4s (secondary benefit \u2014 orphaned RequestContext was holding TimingMetadata alive longer)\n\nThe remaining 3.3 MiB/10min growth (~20 MiB/hour) is within normal operational bounds \u2014 it's mostly router context churn and metric buffering that will stabilize as the process reaches steady state.\n\nAt the previous leak rate, you'd OOMKill in ~12 hours. With the fix, steady-state RSS should plateau well under your 4GB limit. The cross-reference amplification loop is also broken \u2014 leaked RequestContext objects were preventing KV metadata TTL cleanup, which was feeding the collision chain growth."
+        }
+      ],
+      "timestamp": "2026-03-31T14:27:00Z",
+      "input_tokens": 0,
+      "output_tokens": 3259,
+      "cumulative_tokens": 67430
+    },
+    {
+      "turn_id": 16,
+      "parent_turn_id": 15,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "Excellent results. Let me also check if the existing leaked objects are being cleaned up by the GC now that the reference cycles are broken. Can you run objgraph to check the RequestContext count trend over 60 seconds?"
+        }
+      ],
+      "timestamp": "2026-03-31T14:27:30Z",
+      "input_tokens": 711,
+      "output_tokens": 0,
+      "cumulative_tokens": 68141
+    },
+    {
+      "turn_id": 17,
+      "parent_turn_id": 16,
+      "role": "tool",
+      "content_blocks": [
+        {
+          "type": "log",
+          "text": "$ python3 -c \"\nimport objgraph, time, json\nresults = []\nfor i in range(7):\n    count = objgraph.count('RequestContext')\n    results.append({'elapsed_s': i*10, 'request_context_count': count})\n    if i < 6: time.sleep(10)\nprint(json.dumps(results, indent=2))\n\"\n\n[\n  {\"elapsed_s\": 0,  \"request_context_count\": 891204},\n  {\"elapsed_s\": 10, \"request_context_count\": 724891},\n  {\"elapsed_s\": 20, \"request_context_count\": 412033},\n  {\"elapsed_s\": 30, \"request_context_count\": 198442},\n  {\"elapsed_s\": 40, \"request_context_count\": 48201},\n  {\"elapsed_s\": 50, \"request_context_count\": 12044},\n  {\"elapsed_s\": 60, \"request_context_count\": 2891}\n]\n\nNote: Final count of 2,891 is consistent with current inflight requests (within max_inflight_requests: 2048 + pipeline buffering). The 891K backlog was fully drained by the cyclic GC once reference chains were broken.",
+          "metadata": {
+            "tool": "objgraph",
+            "command": "python3 objgraph count trend",
+            "exit_code": 0,
+            "duration_seconds": 62.1
+          }
+        },
+        {
+          "type": "log",
+          "text": "$ python3 -c \"\nimport objgraph, json\nfor typ in ['PhaseEntry','CollisionChainNode','NIXLTransferCallback','WorkerContext']:\n    print(f'{typ}: {objgraph.count(typ)}')\n\"\n\nPhaseEntry: 1203\nCollisionChainNode: 4401\nNIXLTransferCallback: 891\nWorkerContext: 1782\n\nAll counts are within expected operational ranges for a live deployment with ~2K inflight requests.",
+          "metadata": {
+            "tool": "objgraph",
+            "command": "python3 objgraph type counts",
+            "exit_code": 0,
+            "duration_seconds": 3.2
+          }
+        }
+      ],
+      "timestamp": "2026-03-31T14:28:45Z",
+      "input_tokens": 7111,
+      "output_tokens": 0,
+      "cumulative_tokens": 75252
+    },
+    {
+      "turn_id": 18,
+      "parent_turn_id": 17,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "The backlog is draining beautifully. The cyclic GC reclaimed 891K \u2192 2.9K RequestContext objects in 60 seconds once we broke the reference chains:\n\n```\nt=0s:  891,204 (leaked backlog)\nt=10s: 724,891 (-19%)\nt=20s: 412,033 (-54%)\nt=30s: 198,442 (-78%)\nt=40s:  48,201 (-95%)\nt=50s:  12,044 (-99%)\nt=60s:   2,891 (-99.7%) \u2190 steady state, matches inflight request count\n```\n\nAll leak-related object types are now at operational levels:\n- PhaseEntry: 1,203 (was 742,891)\n- CollisionChainNode: 4,401 (was 523,019) \n- NIXLTransferCallback: 891 (was 198,442)\n- WorkerContext: 1,782 (was 396,884)\n\n**Summary of the fix:**\n1. **RequestTracker** \u2014 Added eager phase entry cleanup in `complete_request()` and defensive cleanup in `_gc_sweep()` for both `:prefill` and `:decode` suffixed keys. Called `ctx.release()` to break KVSlotAssignment cross-references.\n2. **KVMetadataIndex** \u2014 Switched collision chain entries from strong references to `weakref.ref()`, and added dead-ref pruning in `_evict_block()`.\n3. **NIXLCallbackRegistry** \u2014 Added `_pending_callbacks.pop()` in `_handle_transfer_error()` to deregister the success callback when a transfer fails, with explicit closure cell clearing.\n\nThe frontend should now run indefinitely without RSS growth beyond steady-state. I'd recommend monitoring RSS over the next 24 hours to confirm, and consider adding a metric for `request_tracker_phase_entry_count` to catch regressions."
+        }
+      ],
+      "timestamp": "2026-03-31T14:29:00Z",
+      "input_tokens": 0,
+      "output_tokens": 4740,
+      "cumulative_tokens": 79992
+    }
+  ],
+  "replay": {
+    "prefix_group_id": "memleak-debug-dynamo-frontend",
+    "prefix_overlap_ratio": 0.75,
+    "reuse_distance_turns": 3,
+    "reuse_distance_seconds": 120,
+    "estimated_kv_bytes_peak": 412000000,
+    "branch_count": 0,
+    "idle_windows_ms": [
+      0,
+      5000,
+      20000,
+      10000
+    ],
+    "arrival_pattern": "steady_interactive"
+  },
+  "kv_pressure": {
+    "cold_start": true,
+    "warm_cache_hit_rate": 0.62,
+    "estimated_offload_bytes": 268435456,
+    "estimated_reload_bytes": 134217728,
+    "tier": "HBM",
+    "cache_expectation": "warm",
+    "eviction_risk_score": 0.45
+  },
+  "provenance": {
+    "generator_model": "claude-opus-4-6",
+    "generator_prompt_version": "isb1-session-trace-v0.3",
+    "pipeline_version": "0.1.0"
+  }
+}

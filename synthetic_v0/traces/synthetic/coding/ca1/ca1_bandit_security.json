@@ -1,0 +1,340 @@
+{
+  "trace_id": "cod_bandit_sec_a7e2f103",
+  "dataset_version": "0.1.0",
+  "source_type": "synthetic",
+  "workload_family": "coding",
+  "language": "en",
+  "tokenizer": {
+    "name": "cl100k_base",
+    "version": "1.0"
+  },
+  "session": {
+    "session_id": "sess-b4c81d09-3a7e-42f1-9c83-07d5ea1f28a3",
+    "goal": "Review and fix security vulnerabilities flagged by Bandit in a Python web app",
+    "contains_tools": true,
+    "contains_rag": true,
+    "contains_branching": false,
+    "contains_multimodal": false
+  },
+  "turns": [
+    {
+      "turn_id": 1,
+      "parent_turn_id": null,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "I just ran Bandit on our Flask web app and got a wall of findings. Here's the summary output:\n\n```\nRun started:2026-03-31 08:14:22.481673\n\nTest results:\n>> Issue: [B501:request_with_no_cert_verification] Requests call with verify=False disabling SSL certificate checks.\n   Severity: High   Confidence: High\n   CWE: CWE-295 (Improper Certificate Validation)\n   Location: app/integrations/payment_gateway.py:47:15\n   More Info: https://bandit.readthedocs.io/en/1.8.0/plugins/b501_request_with_no_cert_verification.html\n\n>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.\n   Severity: Medium   Confidence: Medium\n   CWE: CWE-89 (SQL Injection)\n   Location: app/models/user_repository.py:83:8\n   More Info: https://bandit.readthedocs.io/en/1.8.0/plugins/b608_hardcoded_sql_expressions.html\n\n>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.\n   Severity: Medium   Confidence: Medium\n   CWE: CWE-89 (SQL Injection)\n   Location: app/models/user_repository.py:124:8\n\n>> Issue: [B301:pickle] Pickle and modules that wrap it can be made to execute arbitrary commands when untrusted data is unpickled.\n   Severity: Medium   Confidence: High\n   CWE: CWE-502 (Deserialization of Untrusted Data)\n   Location: app/cache/session_store.py:31:19\n\n>> Issue: [B301:pickle] Pickle and modules that wrap it can be made to execute arbitrary commands when untrusted data is unpickled.\n   Severity: Medium   Confidence: High\n   CWE: CWE-502 (Deserialization of Untrusted Data)\n   Location: app/cache/session_store.py:56:19\n\n>> Issue: [B324:hashlib] Use of insecure MD5 hash function.\n   Severity: Medium   Confidence: High\n   CWE: CWE-328 (Use of Weak Hash)\n   Location: app/auth/token_manager.py:22:18\n\n>> Issue: [B105:hardcoded_password_string] Possible hardcoded password: 'sk_live_REDACTED_EXAMPLE_KEY'\n   Severity: Low   Confidence: Medium\n   CWE: CWE-259 (Use of Hard-coded Password)\n   Location: app/integrations/payment_gateway.py:12:0\n\n>> Issue: [B110:try_except_pass] Try, Except, Pass detected.\n   Severity: Low   Confidence: High\n   CWE: CWE-390 (Detection of Error Condition Without Action)\n   Location: app/auth/token_manager.py:65:4\n\n>> Issue: [B703:django_mark_safe] Potential XSS on mark_safe function.\n   Severity: Medium   Confidence: High\n   CWE: CWE-79 (Cross-site Scripting)\n   Location: app/views/admin_dashboard.py:94:11\n\nCode scanned:\n   Total lines of code: 4,218\n   Total lines skipped (#nosec): 0\n\nRun metrics:\n   Total issues (by severity):\n      Undefined: 0\n      Low: 2\n      Medium: 6\n      High: 1\n   Total issues (by confidence):\n      Undefined: 0\n      Low: 0\n      Medium: 2\n      High: 7\n   Files skipped (0):\n```\n\n9 findings total. Can you help me triage and fix these? I want to start with the most critical ones. The app handles payment processing so the payment gateway and SQL injection issues scare me the most.",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        }
+      ],
+      "timestamp": "2026-03-31T08:15:01.000Z",
+      "input_tokens": 1842,
+      "output_tokens": 0,
+      "cumulative_tokens": 1842
+    },
+    {
+      "turn_id": 2,
+      "parent_turn_id": 1,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "Good instinct on prioritization. Let me triage these by actual risk, not just Bandit severity:\n\n**Critical (fix immediately):**\n1. **B105 \u2014 Hardcoded Stripe secret key** (`payment_gateway.py:12`). This is your biggest problem. A live Stripe secret key in source code means anyone with repo access can charge cards, issue refunds, or exfiltrate customer payment data. If this repo is public or has been shared, you need to rotate this key immediately via the Stripe dashboard.\n2. **B501 \u2014 SSL verification disabled** (`payment_gateway.py:47`). Combined with the hardcoded key, this means your payment gateway calls are both authenticated with a real key AND not verifying the server certificate. This is a textbook MITM vector \u2014 an attacker on the network path can intercept payment API calls.\n3. **B608 \u2014 SQL injection** (`user_repository.py:83, 124`). Two instances of string-based query construction in a user repository. If any of the interpolated values come from user input (which they likely do in a user repo), this is exploitable.\n\n**High (fix this sprint):**\n4. **B301 \u2014 Pickle deserialization** (`session_store.py:31, 56`). If session data comes from client-controlled cookies or a shared cache, unpickling it allows arbitrary code execution. The severity depends on where the pickled data originates.\n5. **B703 \u2014 XSS via mark_safe** (`admin_dashboard.py:94`). If the value passed to `mark_safe` includes any user-controlled content, this is a stored/reflected XSS in your admin panel.\n\n**Medium (fix soon):**\n6. **B324 \u2014 MD5 for hashing** (`token_manager.py:22`). MD5 is cryptographically broken. If this is used for token generation or verification, it's exploitable. If it's just a cache key or non-security hash, it's less urgent.\n7. **B110 \u2014 try/except/pass** (`token_manager.py:65`). Silent exception swallowing in auth code can mask security failures.\n\nLet me grep into the most critical files to see the actual code and assess exploitability.",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        }
+      ],
+      "timestamp": "2026-03-31T08:15:18.000Z",
+      "input_tokens": 0,
+      "output_tokens": 2106,
+      "cumulative_tokens": 3948
+    },
+    {
+      "turn_id": 3,
+      "parent_turn_id": 2,
+      "role": "tool",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "$ grep -n -A 15 'sk_live\\|verify=False\\|requests\\.post\\|requests\\.get' app/integrations/payment_gateway.py\n\n10:# Payment gateway configuration\n11:PAYMENT_API_URL = \"https://api.stripe.com/v1\"\n12:STRIPE_SECRET_KEY = \"sk_live_REDACTED_EXAMPLE_KEY\"\n13:STRIPE_WEBHOOK_SECRET = \"whsec_test_abcdef123456\"\n14:\n15:class PaymentGateway:\n16:    def __init__(self):\n17:        self.api_key = STRIPE_SECRET_KEY\n18:        self.base_url = PAYMENT_API_URL\n19:\n20:    def charge_customer(self, customer_id: str, amount_cents: int, currency: str = \"usd\"):\n21:        \"\"\"Create a charge for a customer.\"\"\"\n22:        response = requests.post(\n23:            f\"{self.base_url}/charges\",\n24:            headers={\"Authorization\": f\"Bearer {self.api_key}\"},\n25:            data={\n26:                \"customer\": customer_id,\n27:                \"amount\": amount_cents,\n28:                \"currency\": currency,\n29:            },\n30:            verify=False,  # TODO: fix cert issues in staging\n31:        )\n32:        return response.json()\n33:\n34:    def create_refund(self, charge_id: str, amount_cents: int = None):\n35:        payload = {\"charge\": charge_id}\n36:        if amount_cents:\n37:            payload[\"amount\"] = amount_cents\n38:        response = requests.post(\n39:            f\"{self.base_url}/refunds\",\n40:            headers={\"Authorization\": f\"Bearer {self.api_key}\"},\n41:            data=payload,\n42:            verify=False,\n43:        )\n44:        return response.json()\n45:\n46:    def get_customer(self, customer_id: str):\n47:        response = requests.get(\n48:            f\"{self.base_url}/customers/{customer_id}\",\n49:            headers={\"Authorization\": f\"Bearer {self.api_key}\"},\n50:            verify=False,\n51:        )\n52:        return response.json()\n53:\n54:    def create_payment_intent(self, amount_cents: int, currency: str, metadata: dict = None):\n55:        data = {\"amount\": amount_cents, \"currency\": currency}\n56:        if metadata:\n57:            for k, v in metadata.items():\n58:                data[f\"metadata[{k}]\"] = v\n59:        response = requests.post(\n60:            f\"{self.base_url}/payment_intents\",\n61:            headers={\"Authorization\": f\"Bearer {self.api_key}\"},\n62:            data=data,\n63:            verify=False,\n64:        )\n65:        return response.json()",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {
+            "tool_name": "grep",
+            "exit_code": 0
+          }
+        },
+        {
+          "type": "text",
+          "text": "$ grep -n -B 3 -A 12 'SELECT\\|INSERT\\|UPDATE\\|DELETE\\|f\"\\|format(' app/models/user_repository.py\n\n78:class UserRepository:\n79:    def __init__(self, db_connection):\n80:        self.conn = db_connection\n81:\n82:    def find_by_email(self, email: str):\n83:        query = f\"SELECT id, email, name, role, created_at FROM users WHERE email = '{email}'\"\n84:        cursor = self.conn.execute(query)\n85:        row = cursor.fetchone()\n86:        if row:\n87:            return User(*row)\n88:        return None\n89:\n90:    def find_by_id(self, user_id: int):\n91:        query = f\"SELECT id, email, name, role, created_at FROM users WHERE id = {user_id}\"\n92:        cursor = self.conn.execute(query)\n93:        row = cursor.fetchone()\n94:        if row:\n95:            return User(*row)\n96:        return None\n97:\n98:    def search_users(self, name_pattern: str, role: str = None):\n99:        query = f\"SELECT id, email, name, role FROM users WHERE name LIKE '%{name_pattern}%'\"\n100:        if role:\n101:            query += f\" AND role = '{role}'\"\n102:        cursor = self.conn.execute(query)\n103:        return [User(*row) for row in cursor.fetchall()]\n104:\n105:    def update_user_role(self, user_id: int, new_role: str):\n106:        query = f\"UPDATE users SET role = '{new_role}' WHERE id = {user_id}\"\n107:        self.conn.execute(query)\n108:        self.conn.commit()\n109:\n110:    def create_user(self, email: str, name: str, password_hash: str, role: str = \"user\"):\n111:        query = f\"INSERT INTO users (email, name, password_hash, role) VALUES ('{email}', '{name}', '{password_hash}', '{role}')\"\n112:        self.conn.execute(query)\n113:        self.conn.commit()\n114:\n115:    def delete_inactive_users(self, days: int = 90):\n116:        query = f\"DELETE FROM users WHERE last_login < datetime('now', '-{days} days') AND role != 'admin'\"\n117:        cursor = self.conn.execute(query)\n118:        self.conn.commit()\n119:        return cursor.rowcount\n120:\n121:    def get_users_by_ids(self, user_ids: list):\n122:        ids_str = \", \".join(str(uid) for uid in user_ids)\n123:        query = f\"SELECT id, email, name, role FROM users WHERE id IN ({ids_str})\"\n124:        cursor = self.conn.execute(query)\n125:        return [User(*row) for row in cursor.fetchall()]",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {
+            "tool_name": "grep",
+            "exit_code": 0
+          }
+        }
+      ],
+      "timestamp": "2026-03-31T08:15:22.000Z",
+      "input_tokens": 3284,
+      "output_tokens": 0,
+      "cumulative_tokens": 7232
+    },
+    {
+      "turn_id": 4,
+      "parent_turn_id": 3,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "This is worse than I expected. Let me assess each finding from the grep results:\n\n### Payment Gateway \u2014 Multiple Critical Issues\n\n**Hardcoded Stripe live key** (line 12): `sk_live_REDACTED_EXAMPLE_KEY` is a LIVE Stripe secret key committed to source. This key can create charges, issue refunds, read customer PII, and modify your Stripe account. **Action required: rotate this key in Stripe Dashboard immediately, then move to environment variable.**\n\nThe webhook secret on line 13 (`whsec_test_abcdef123456`) also needs to move out of source, though at least that one looks like a test key.\n\n**`verify=False` on every request** (lines 30, 42, 50, 63): Every single Stripe API call disables certificate verification. The comment says \"TODO: fix cert issues in staging\" \u2014 this is the classic case of a staging workaround that shipped to production. With TLS verification disabled, any network-level attacker (compromised proxy, rogue DNS, BGP hijack) can intercept your Stripe API traffic, including the bearer token and customer payment data.\n\n### User Repository \u2014 Pervasive SQL Injection\n\nThis is a textbook SQL injection vulnerability across **every single method**:\n\n- `find_by_email` (line 83): Direct f-string interpolation of `email` into a WHERE clause. An attacker sending `' OR '1'='1` as email retrieves all users.\n- `find_by_id` (line 91): Interpolates `user_id` directly. If the caller doesn't validate it's actually an int upstream, this is injectable.\n- `search_users` (line 99): Interpolates `name_pattern` into a LIKE clause AND `role` into an AND clause. Double injection point.\n- `update_user_role` (line 106): Interpolates both `new_role` and `user_id`. An attacker could escalate privileges: `new_role=\"admin' WHERE '1'='1\"` would make every user an admin.\n- `create_user` (line 111): Interpolates all fields including `password_hash`. Injection in the INSERT could corrupt the users table or extract data via error-based techniques.\n- `delete_inactive_users` (line 116): Interpolates `days`. Less exploitable since it's likely an int from internal code, but still bad practice.\n- `get_users_by_ids` (line 123): Joins IDs with string formatting into an IN clause. If `user_ids` contains non-integer values, this is injectable.\n\nBandit only flagged 2 of these (lines 83 and 124), but all 7 methods are vulnerable. The entire repository needs to be rewritten with parameterized queries.\n\nLet me also check the session store and auth files before we start patching.",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        }
+      ],
+      "timestamp": "2026-03-31T08:15:47.000Z",
+      "input_tokens": 0,
+      "output_tokens": 2894,
+      "cumulative_tokens": 10126
+    },
+    {
+      "turn_id": 5,
+      "parent_turn_id": 4,
+      "role": "retrieval",
+      "content_blocks": [
+        {
+          "type": "document",
+          "text": "OWASP Injection Prevention Cheat Sheet \u2014 Updated 2026-02\nhttps://cheatsheetseries.owasp.org/cheatsheets/Injection_Prevention_Cheat_Sheet.html\n\n## Defense Option 1: Prepared Statements (Parameterized Queries)\n\nThe use of prepared statements with variable binding (parameterized queries) is the most effective defense against SQL injection. Parameterized queries force the developer to define all SQL code first, then pass each parameter to the query later. This coding style allows the database to distinguish between code and data, regardless of what user input is supplied.\n\nPrepared statements ensure that an attacker cannot change the intent of a query, even if SQL commands are inserted. In the example below, if an attacker were to enter the user ID of `tom' or '1'='1`, the parameterized query would not be vulnerable and would instead look for a username which literally matched the entire string `tom' or '1'='1`.\n\n### Python (sqlite3)\n```python\n# UNSAFE - DO NOT USE\nquery = f\"SELECT * FROM users WHERE email = '{email}'\"\ncursor.execute(query)\n\n# SAFE - parameterized\ncursor.execute(\"SELECT * FROM users WHERE email = ?\", (email,))\n```\n\n### Python (psycopg2 / PostgreSQL)\n```python\n# SAFE - parameterized\ncursor.execute(\"SELECT * FROM users WHERE email = %s\", (email,))\n```\n\n### Python (SQLAlchemy Core)\n```python\nfrom sqlalchemy import text\nresult = connection.execute(text(\"SELECT * FROM users WHERE email = :email\"), {\"email\": email})\n```\n\n## Defense Option 2: Input Validation\n\nInput validation can be used as a secondary defense. It should NOT be the primary defense against injection because it is difficult to cover all possible inputs. However, it can catch obviously malicious input before it reaches the query layer.\n\n- Validate data type (e.g., ensure user_id is an integer)\n- Validate against allowlists for enumerated values (e.g., role in ['admin', 'user', 'moderator'])\n- Reject inputs containing SQL metacharacters when not expected\n\n## CWE-502: Deserialization of Untrusted Data\n\nNever deserialize data from untrusted sources using `pickle`, `marshal`, `shelve`, or `yaml.load()`. These modules can execute arbitrary code during deserialization.\n\n### Secure alternatives:\n- **JSON** (`json.loads`): Safe, only produces basic Python types\n- **MessagePack** (`msgpack.unpackb`): Safe binary format, faster than JSON\n- **Protocol Buffers**: Schema-enforced, no arbitrary code execution\n- If you must use pickle, use `hmac` to sign the pickled data and verify the signature before unpickling. Use `pickle.loads()` only on data you signed yourself.\n\n```python\n# UNSAFE\nimport pickle\nsession_data = pickle.loads(raw_bytes)  # arbitrary code execution\n\n# SAFE \u2014 use JSON\nimport json\nsession_data = json.loads(raw_bytes)\n\n# SAFE \u2014 signed pickle (last resort)\nimport hmac, hashlib, pickle\nexpected_sig = hmac.new(SECRET_KEY, raw_bytes, hashlib.sha256).digest()\nif hmac.compare_digest(expected_sig, received_sig):\n    session_data = pickle.loads(raw_bytes)\n```\n\n## CWE-295: Improper Certificate Validation\n\nAlways verify TLS certificates when making HTTPS requests. Disabling verification (`verify=False`) allows man-in-the-middle attacks.\n\n```python\n# UNSAFE\nrequests.get(url, verify=False)\n\n# SAFE \u2014 uses system CA bundle\nrequests.get(url)\n\n# SAFE \u2014 custom CA bundle for internal services\nrequests.get(url, verify='/path/to/ca-bundle.crt')\n```\n\nIf you're hitting certificate errors in staging, the correct fix is to:\n1. Install the correct CA certificates on the staging server\n2. Use a custom CA bundle path for internal PKI\n3. Never disable verification globally or carry `verify=False` to production\n\n## CWE-79: Cross-Site Scripting (XSS)\n\nDjango's `mark_safe()` and Jinja2's `|safe` filter bypass auto-escaping. Only use them on content you have explicitly sanitized:\n\n```python\n# UNSAFE \u2014 user content passed to mark_safe\nfrom django.utils.safestring import mark_safe\ndef render_comment(comment):\n    return mark_safe(f\"<div class='comment'>{comment.body}</div>\")\n\n# SAFE \u2014 escape first, then mark_safe\nfrom django.utils.html import escape\ndef render_comment(comment):\n    return mark_safe(f\"<div class='comment'>{escape(comment.body)}</div>\")\n```",
+          "uri": "https://cheatsheetseries.owasp.org/cheatsheets/Injection_Prevention_Cheat_Sheet.html",
+          "mime_type": "text/markdown",
+          "metadata": {
+            "source": "owasp_cheatsheet",
+            "retrieved_at": "2026-03-31T08:15:50.000Z",
+            "relevance_score": 0.94
+          }
+        }
+      ],
+      "timestamp": "2026-03-31T08:15:50.000Z",
+      "input_tokens": 2680,
+      "output_tokens": 0,
+      "cumulative_tokens": 12806
+    },
+    {
+      "turn_id": 6,
+      "parent_turn_id": 5,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "Good \u2014 the OWASP guidance confirms the approach. Let me produce the patches for the two critical files. Starting with the payment gateway since that's the highest-risk item.\n\n### Patch 1: `app/integrations/payment_gateway.py`\n\nThree changes: (a) remove hardcoded keys, (b) load from environment, (c) re-enable TLS verification."
+        },
+        {
+          "type": "code",
+          "text": "import os\nimport requests\n\n\nPAYMENT_API_URL = os.environ.get(\"STRIPE_API_URL\", \"https://api.stripe.com/v1\")\nSTRIPE_SECRET_KEY = os.environ[\"STRIPE_SECRET_KEY\"]  # fail fast if missing\nSTRIPE_WEBHOOK_SECRET = os.environ[\"STRIPE_WEBHOOK_SECRET\"]\n\n\nclass PaymentGateway:\n    def __init__(self, api_key: str = None, ca_bundle: str = None):\n        self.api_key = api_key or STRIPE_SECRET_KEY\n        self.base_url = PAYMENT_API_URL\n        # Allow custom CA bundle for internal PKI; default uses system CAs\n        self.verify = ca_bundle if ca_bundle else True\n\n    def _headers(self):\n        return {\"Authorization\": f\"Bearer {self.api_key}\"}\n\n    def charge_customer(self, customer_id: str, amount_cents: int, currency: str = \"usd\"):\n        response = requests.post(\n            f\"{self.base_url}/charges\",\n            headers=self._headers(),\n            data={\n                \"customer\": customer_id,\n                \"amount\": amount_cents,\n                \"currency\": currency,\n            },\n            verify=self.verify,\n        )\n        response.raise_for_status()\n        return response.json()\n\n    def create_refund(self, charge_id: str, amount_cents: int = None):\n        payload = {\"charge\": charge_id}\n        if amount_cents:\n            payload[\"amount\"] = amount_cents\n        response = requests.post(\n            f\"{self.base_url}/refunds\",\n            headers=self._headers(),\n            data=payload,\n            verify=self.verify,\n        )\n        response.raise_for_status()\n        return response.json()\n\n    def get_customer(self, customer_id: str):\n        response = requests.get(\n            f\"{self.base_url}/customers/{customer_id}\",\n            headers=self._headers(),\n            verify=self.verify,\n        )\n        response.raise_for_status()\n        return response.json()\n\n    def create_payment_intent(self, amount_cents: int, currency: str, metadata: dict = None):\n        data = {\"amount\": amount_cents, \"currency\": currency}\n        if metadata:\n            for k, v in metadata.items():\n                data[f\"metadata[{k}]\"] = v\n        response = requests.post(\n            f\"{self.base_url}/payment_intents\",\n            headers=self._headers(),\n            data=data,\n            verify=self.verify,\n        )\n        response.raise_for_status()\n        return response.json()",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {
+            "language": "python",
+            "patch_target": "app/integrations/payment_gateway.py"
+          }
+        },
+        {
+          "type": "text",
+          "text": "Key changes:\n- `STRIPE_SECRET_KEY` now read from `os.environ` with no default \u2014 app crashes on startup if not set, which is the correct behavior\n- `verify=False` replaced with `self.verify` defaulting to `True` (system CA bundle)\n- Constructor accepts optional `ca_bundle` path for internal PKI setups\n- Added `response.raise_for_status()` so failed Stripe calls don't silently return error JSON that gets treated as success\n\n**You must also:**\n1. Rotate the leaked Stripe key immediately in the Stripe Dashboard\n2. Add `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` to your deployment's environment/secrets manager\n3. Scan git history for the old key \u2014 if the repo was ever public or shared, consider the key fully compromised\n\n### Patch 2: `app/models/user_repository.py`\n\nFull rewrite to parameterized queries:"
+        },
+        {
+          "type": "code",
+          "text": "class UserRepository:\n    def __init__(self, db_connection):\n        self.conn = db_connection\n\n    def find_by_email(self, email: str):\n        cursor = self.conn.execute(\n            \"SELECT id, email, name, role, created_at FROM users WHERE email = ?\",\n            (email,)\n        )\n        row = cursor.fetchone()\n        return User(*row) if row else None\n\n    def find_by_id(self, user_id: int):\n        cursor = self.conn.execute(\n            \"SELECT id, email, name, role, created_at FROM users WHERE id = ?\",\n            (user_id,)\n        )\n        row = cursor.fetchone()\n        return User(*row) if row else None\n\n    def search_users(self, name_pattern: str, role: str = None):\n        if role:\n            cursor = self.conn.execute(\n                \"SELECT id, email, name, role FROM users WHERE name LIKE ? AND role = ?\",\n                (f\"%{name_pattern}%\", role)\n            )\n        else:\n            cursor = self.conn.execute(\n                \"SELECT id, email, name, role FROM users WHERE name LIKE ?\",\n                (f\"%{name_pattern}%\",)\n            )\n        return [User(*row) for row in cursor.fetchall()]\n\n    def update_user_role(self, user_id: int, new_role: str):\n        self.conn.execute(\n            \"UPDATE users SET role = ? WHERE id = ?\",\n            (new_role, user_id)\n        )\n        self.conn.commit()\n\n    def create_user(self, email: str, name: str, password_hash: str, role: str = \"user\"):\n        self.conn.execute(\n            \"INSERT INTO users (email, name, password_hash, role) VALUES (?, ?, ?, ?)\",\n            (email, name, password_hash, role)\n        )\n        self.conn.commit()\n\n    def delete_inactive_users(self, days: int = 90):\n        cursor = self.conn.execute(\n            \"DELETE FROM users WHERE last_login < datetime('now', ? || ' days') AND role != 'admin'\",\n            (f\"-{days}\",)\n        )\n        self.conn.commit()\n        return cursor.rowcount\n\n    def get_users_by_ids(self, user_ids: list):\n        placeholders = \", \".join(\"?\" for _ in user_ids)\n        cursor = self.conn.execute(\n            f\"SELECT id, email, name, role FROM users WHERE id IN ({placeholders})\",\n            tuple(user_ids)\n        )\n        return [User(*row) for row in cursor.fetchall()]",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {
+            "language": "python",
+            "patch_target": "app/models/user_repository.py"
+          }
+        },
+        {
+          "type": "text",
+          "text": "Every method now uses `?` placeholders with parameter tuples. The `get_users_by_ids` method uses dynamic placeholder count but the values are still parameterized \u2014 the f-string only builds the `?, ?, ?` part, never interpolates user data.\n\nThe `delete_inactive_users` method uses a parameterized date offset string concatenated with SQLite's `datetime()` function \u2014 this is safe because the parameter is bound, not interpolated.\n\nThat covers the two highest-priority findings. Let me now look at the remaining issues \u2014 pickle deserialization, MD5 hashing, and the XSS.",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        }
+      ],
+      "timestamp": "2026-03-31T08:16:31.000Z",
+      "input_tokens": 0,
+      "output_tokens": 5487,
+      "cumulative_tokens": 18293
+    },
+    {
+      "turn_id": 7,
+      "parent_turn_id": 6,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "The payment gateway and SQL injection patches look solid. I've already rotated the Stripe key and added the env vars to our secrets manager.\n\nNow let's tackle the remaining findings:\n- B301: pickle in session_store.py (lines 31 and 56)\n- B324: MD5 in token_manager.py (line 22)\n- B110: try/except/pass in token_manager.py (line 65)\n- B703: mark_safe XSS in admin_dashboard.py (line 94)\n\nFor the session store \u2014 we're using Redis as the backend and the pickle is for serializing session data before storing it. The session data comes from authenticated users but I know that doesn't make pickle safe. What's the best migration path without breaking existing sessions?",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        }
+      ],
+      "timestamp": "2026-03-31T08:18:22.000Z",
+      "input_tokens": 892,
+      "output_tokens": 0,
+      "cumulative_tokens": 19185
+    },
+    {
+      "turn_id": 8,
+      "parent_turn_id": 7,
+      "role": "tool",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "$ grep -n -A 20 'class SessionStore\\|pickle\\|import pickle\\|import json' app/cache/session_store.py\n\n1:import pickle\n2:import redis\n3:import logging\n4:\n5:logger = logging.getLogger(__name__)\n6:\n7:class SessionStore:\n8:    \"\"\"Redis-backed session storage.\"\"\"\n9:\n10:    def __init__(self, redis_client: redis.Redis, prefix: str = \"session:\", ttl: int = 3600):\n11:        self.redis = redis_client\n12:        self.prefix = prefix\n13:        self.ttl = ttl\n14:\n15:    def _key(self, session_id: str) -> str:\n16:        return f\"{self.prefix}{session_id}\"\n17:\n18:    def save(self, session_id: str, data: dict):\n19:        \"\"\"Serialize session data and store in Redis.\"\"\"\n20:        raw = pickle.dumps(data)\n21:        self.redis.setex(self._key(session_id), self.ttl, raw)\n22:\n23:    def load(self, session_id: str) -> dict | None:\n24:        \"\"\"Load session data from Redis.\"\"\"\n25:        raw = self.redis.get(self._key(session_id))\n26:        if raw is None:\n27:            return None\n28:        return pickle.loads(raw)\n29:\n30:    def delete(self, session_id: str):\n31:        self.redis.delete(self._key(session_id))\n32:\n33:    def extend(self, session_id: str):\n34:        \"\"\"Extend session TTL.\"\"\"\n35:        self.redis.expire(self._key(session_id), self.ttl)\n36:\n37:    def bulk_save(self, sessions: dict[str, dict]):\n38:        \"\"\"Save multiple sessions in a pipeline.\"\"\"\n39:        pipe = self.redis.pipeline()\n40:        for session_id, data in sessions.items():\n41:            raw = pickle.dumps(data)\n42:            pipe.setex(self._key(session_id), self.ttl, raw)\n43:        pipe.execute()\n44:\n45:    def bulk_load(self, session_ids: list[str]) -> dict[str, dict | None]:\n46:        \"\"\"Load multiple sessions in a pipeline.\"\"\"\n47:        pipe = self.redis.pipeline()\n48:        for sid in session_ids:\n49:            pipe.get(self._key(sid))\n50:        results = pipe.execute()\n51:        output = {}\n52:        for sid, raw in zip(session_ids, results):\n53:            if raw is not None:\n54:                output[sid] = pickle.loads(raw)\n55:            else:\n56:                output[sid] = None\n57:        return output",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {
+            "tool_name": "grep",
+            "exit_code": 0
+          }
+        },
+        {
+          "type": "text",
+          "text": "$ grep -n -B 2 -A 15 'md5\\|hashlib\\|try:\\|except.*pass\\|except:' app/auth/token_manager.py\n\n1:import hashlib\n2:import hmac\n3:import os\n4:import time\n5:import secrets\n6:import logging\n7:\n8:logger = logging.getLogger(__name__)\n9:\n10:TOKEN_SECRET = os.environ.get(\"TOKEN_SECRET\", \"changeme\")\n11:\n12:class TokenManager:\n13:    def __init__(self, secret: str = None):\n14:        self.secret = (secret or TOKEN_SECRET).encode()\n15:\n16:    def generate_token(self, user_id: int, expires_in: int = 3600) -> str:\n17:        \"\"\"Generate a signed token for a user.\"\"\"\n18:        timestamp = int(time.time())\n19:        expiry = timestamp + expires_in\n20:        payload = f\"{user_id}:{timestamp}:{expiry}\"\n21:        # Create signature\n22:        signature = hashlib.md5(f\"{payload}:{self.secret.decode()}\".encode()).hexdigest()\n23:        return f\"{payload}:{signature}\"\n24:\n25:    def verify_token(self, token: str) -> int | None:\n26:        \"\"\"Verify token and return user_id if valid.\"\"\"\n27:        parts = token.split(\":\")\n28:        if len(parts) != 4:\n29:            return None\n30:        user_id, timestamp, expiry, signature = parts\n31:        # Check expiry\n32:        if int(expiry) < time.time():\n33:            return None\n34:        # Verify signature\n35:        payload = f\"{user_id}:{timestamp}:{expiry}\"\n36:        expected = hashlib.md5(f\"{payload}:{self.secret.decode()}\".encode()).hexdigest()\n37:        if signature == expected:  # timing-unsafe comparison!\n38:            return int(user_id)\n39:        return None\n40:\n41:    def refresh_token(self, token: str, extends_by: int = 3600) -> str | None:\n42:        \"\"\"Refresh a valid token with a new expiry.\"\"\"\n43:        user_id = self.verify_token(token)\n44:        if user_id is not None:\n45:            return self.generate_token(user_id, extends_by)\n46:        return None\n47:\n48:    def revoke_token(self, token: str):\n49:        \"\"\"Mark a token as revoked. Currently a no-op \u2014 tokens are stateless.\"\"\"\n50:        pass\n51:\n52:    def generate_api_key(self, user_id: int) -> str:\n53:        \"\"\"Generate a persistent API key.\"\"\"\n54:        raw = secrets.token_urlsafe(32)\n55:        return f\"isk1_{user_id}_{raw}\"\n56:\n57:    def validate_api_key(self, api_key: str) -> int | None:\n58:        \"\"\"Extract user_id from API key format. No cryptographic verification.\"\"\"\n59:        try:\n60:            parts = api_key.split(\"_\")\n61:            if len(parts) >= 3 and parts[0] == \"isk1\":\n62:                return int(parts[1])\n63:            return None\n64:        except Exception:\n65:            pass\n66:        return None",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {
+            "tool_name": "grep",
+            "exit_code": 0
+          }
+        },
+        {
+          "type": "text",
+          "text": "$ grep -n -B 3 -A 10 'mark_safe\\|safe\\|escape' app/views/admin_dashboard.py\n\n88:from django.utils.safestring import mark_safe\n89:\n90:class AdminDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):\n91:    template_name = \"admin/dashboard.html\"\n92:\n93:    def get_context_data(self, **kwargs):\n94:        context = super().get_context_data(**kwargs)\n95:        # Build recent activity HTML\n96:        activities = ActivityLog.objects.order_by(\"-created_at\")[:50]\n97:        activity_html = \"\"\n98:        for act in activities:\n99:            activity_html += f\"<tr><td>{act.user.username}</td><td>{act.action}</td><td>{act.details}</td><td>{act.created_at}</td></tr>\"\n100:        context[\"activity_table\"] = mark_safe(f\"<table class='table'><thead><tr><th>User</th><th>Action</th><th>Details</th><th>Time</th></tr></thead><tbody>{activity_html}</tbody></table>\")\n101:\n102:        # Build system alerts\n103:        alerts = SystemAlert.objects.filter(active=True)\n104:        alert_html = \"\"\n105:        for alert in alerts:\n106:            alert_html += f\"<div class='alert alert-{alert.severity}'>{alert.message}</div>\"\n107:        context[\"system_alerts\"] = mark_safe(alert_html)\n108:        return context",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {
+            "tool_name": "grep",
+            "exit_code": 0
+          }
+        }
+      ],
+      "timestamp": "2026-03-31T08:18:30.000Z",
+      "input_tokens": 3720,
+      "output_tokens": 0,
+      "cumulative_tokens": 22905
+    },
+    {
+      "turn_id": 9,
+      "parent_turn_id": 8,
+      "role": "assistant",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "All three files have significant issues beyond what Bandit flagged. Let me break them down and provide patches.\n\n### Session Store \u2014 Pickle to JSON Migration\n\nThe session store is straightforward since it's Redis-backed with a TTL. Existing pickle sessions will expire naturally within `ttl` seconds (default 1 hour). The migration strategy is: write JSON, read both formats during the transition window, then remove the pickle fallback after one TTL cycle."
+        },
+        {
+          "type": "code",
+          "text": "import json\nimport logging\nimport redis\n\nlogger = logging.getLogger(__name__)\n\n\nclass SessionStore:\n    \"\"\"Redis-backed session storage using JSON serialization.\"\"\"\n\n    def __init__(self, redis_client: redis.Redis, prefix: str = \"session:\", ttl: int = 3600):\n        self.redis = redis_client\n        self.prefix = prefix\n        self.ttl = ttl\n\n    def _key(self, session_id: str) -> str:\n        return f\"{self.prefix}{session_id}\"\n\n    def save(self, session_id: str, data: dict):\n        raw = json.dumps(data, default=str)\n        self.redis.setex(self._key(session_id), self.ttl, raw)\n\n    def load(self, session_id: str) -> dict | None:\n        raw = self.redis.get(self._key(session_id))\n        if raw is None:\n            return None\n        try:\n            return json.loads(raw)\n        except (json.JSONDecodeError, UnicodeDecodeError):\n            # Legacy pickle session \u2014 decode for backward compat during migration\n            # Remove this fallback after one full TTL cycle (1 hour)\n            import pickle  # noqa: S403 \u2014 transitional only\n            try:\n                data = pickle.loads(raw)  # noqa: S301\n                # Re-save as JSON so it won't hit this path again\n                self.save(session_id, data)\n                logger.info(\"Migrated pickle session to JSON: %s\", session_id)\n                return data\n            except Exception:\n                logger.warning(\"Failed to load session %s, discarding\", session_id)\n                self.delete(session_id)\n                return None\n\n    def delete(self, session_id: str):\n        self.redis.delete(self._key(session_id))\n\n    def extend(self, session_id: str):\n        self.redis.expire(self._key(session_id), self.ttl)\n\n    def bulk_save(self, sessions: dict[str, dict]):\n        pipe = self.redis.pipeline()\n        for session_id, data in sessions.items():\n            raw = json.dumps(data, default=str)\n            pipe.setex(self._key(session_id), self.ttl, raw)\n        pipe.execute()\n\n    def bulk_load(self, session_ids: list[str]) -> dict[str, dict | None]:\n        pipe = self.redis.pipeline()\n        for sid in session_ids:\n            pipe.get(self._key(sid))\n        results = pipe.execute()\n        output = {}\n        for sid, raw in zip(session_ids, results):\n            if raw is not None:\n                try:\n                    output[sid] = json.loads(raw)\n                except (json.JSONDecodeError, UnicodeDecodeError):\n                    output[sid] = self.load(sid)  # triggers migration path\n            else:\n                output[sid] = None\n        return output",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {
+            "language": "python",
+            "patch_target": "app/cache/session_store.py"
+          }
+        },
+        {
+          "type": "text",
+          "text": "The migration path: new writes are JSON, reads try JSON first and fall back to pickle with automatic re-save. After your TTL (1 hour) expires, all sessions will be JSON and you can remove the pickle fallback in a follow-up commit.\n\n### Token Manager \u2014 Multiple Critical Issues\n\nBandit flagged MD5 and try/except/pass, but I found **four** security bugs:\n\n1. **MD5 for token signing** (line 22): MD5 is broken for collision resistance and fast to brute-force. Switch to SHA-256 via `hmac`.\n2. **Timing-unsafe comparison** (line 37): `signature == expected` is vulnerable to timing attacks. Use `hmac.compare_digest()`.\n3. **Bare string concatenation for HMAC** (line 22): Concatenating `payload:secret` and hashing is not a proper HMAC. Use `hmac.new()` which handles key padding and prevents length-extension attacks.\n4. **`validate_api_key` has no cryptographic verification** (line 58): Anyone who knows the format `isk1_{user_id}_*` can forge API keys. The `secrets.token_urlsafe` part is never verified against a stored value."
+        },
+        {
+          "type": "code",
+          "text": "import hashlib\nimport hmac\nimport json\nimport logging\nimport os\nimport secrets\nimport time\n\nlogger = logging.getLogger(__name__)\n\nTOKEN_SECRET = os.environ.get(\"TOKEN_SECRET\", \"\")\nif not TOKEN_SECRET:\n    logger.critical(\"TOKEN_SECRET not set \u2014 token operations will fail\")\n\n\nclass TokenManager:\n    def __init__(self, secret: str = None):\n        self.secret = (secret or TOKEN_SECRET).encode()\n\n    def _sign(self, payload: str) -> str:\n        \"\"\"HMAC-SHA256 signature.\"\"\"\n        return hmac.new(self.secret, payload.encode(), hashlib.sha256).hexdigest()\n\n    def generate_token(self, user_id: int, expires_in: int = 3600) -> str:\n        timestamp = int(time.time())\n        expiry = timestamp + expires_in\n        payload = f\"{user_id}:{timestamp}:{expiry}\"\n        signature = self._sign(payload)\n        return f\"{payload}:{signature}\"\n\n    def verify_token(self, token: str) -> int | None:\n        parts = token.split(\":\")\n        if len(parts) != 4:\n            return None\n        user_id_str, timestamp, expiry, signature = parts\n        try:\n            if int(expiry) < time.time():\n                return None\n        except ValueError:\n            return None\n        payload = f\"{user_id_str}:{timestamp}:{expiry}\"\n        expected = self._sign(payload)\n        if hmac.compare_digest(signature, expected):\n            try:\n                return int(user_id_str)\n            except ValueError:\n                return None\n        return None\n\n    def refresh_token(self, token: str, extends_by: int = 3600) -> str | None:\n        user_id = self.verify_token(token)\n        if user_id is not None:\n            return self.generate_token(user_id, extends_by)\n        return None\n\n    def revoke_token(self, token: str):\n        # Stateless tokens cannot be revoked without a blocklist.\n        # TODO: implement token blocklist in Redis\n        logger.warning(\"Token revocation requested but not implemented (stateless tokens)\")\n\n    def generate_api_key(self, user_id: int) -> str:\n        raw = secrets.token_urlsafe(32)\n        return f\"isk1_{user_id}_{raw}\"\n\n    def validate_api_key(self, api_key: str) -> int | None:\n        \"\"\"Extract user_id from API key. Caller MUST verify against stored keys.\"\"\"\n        parts = api_key.split(\"_\", maxsplit=2)\n        if len(parts) == 3 and parts[0] == \"isk1\":\n            try:\n                return int(parts[1])\n            except ValueError:\n                logger.warning(\"Malformed API key: non-integer user_id\")\n                return None\n        return None",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {
+            "language": "python",
+            "patch_target": "app/auth/token_manager.py"
+          }
+        },
+        {
+          "type": "text",
+          "text": "Changes:\n- MD5 \u2192 HMAC-SHA256 via `hmac.new()` \u2014 proper keyed hash, not string concatenation\n- `==` \u2192 `hmac.compare_digest()` \u2014 constant-time comparison prevents timing attacks\n- `except Exception: pass` \u2192 specific `ValueError` catch with logging\n- Added warning log on `revoke_token` since it's a no-op\n- Added `maxsplit=2` to `validate_api_key` so tokens containing underscores don't break parsing\n- `TOKEN_SECRET` defaults to empty string with a critical log instead of `\"changeme\"` \u2014 a default password is worse than failing loudly\n\n**Note:** Existing tokens signed with MD5 will fail verification after this deploy. You'll need to either:\n1. Force all users to re-authenticate (cleanest)\n2. Support both during a transition window (check SHA256 first, fall back to MD5 verify-only)\n\nI'd recommend option 1 since your TTL is 1 hour \u2014 most sessions will have rotated naturally by the time you deploy.\n\n### Admin Dashboard \u2014 XSS Fix\n\nThe `mark_safe` call interpolates `act.user.username`, `act.action`, `act.details`, and `alert.message` without escaping. If any of these contain user-controlled content (and usernames almost certainly do), this is stored XSS in your admin panel."
+        },
+        {
+          "type": "code",
+          "text": "from django.utils.html import escape\nfrom django.utils.safestring import mark_safe\n\n\nclass AdminDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):\n    template_name = \"admin/dashboard.html\"\n\n    def get_context_data(self, **kwargs):\n        context = super().get_context_data(**kwargs)\n        activities = ActivityLog.objects.order_by(\"-created_at\")[:50]\n        activity_html = \"\"\n        for act in activities:\n            activity_html += (\n                f\"<tr><td>{escape(act.user.username)}</td>\"\n                f\"<td>{escape(act.action)}</td>\"\n                f\"<td>{escape(act.details)}</td>\"\n                f\"<td>{act.created_at}</td></tr>\"\n            )\n        context[\"activity_table\"] = mark_safe(\n            f\"<table class='table'><thead><tr><th>User</th><th>Action</th>\"\n            f\"<th>Details</th><th>Time</th></tr></thead><tbody>{activity_html}</tbody></table>\"\n        )\n\n        VALID_SEVERITIES = {\"info\", \"warning\", \"danger\", \"success\"}\n        alerts = SystemAlert.objects.filter(active=True)\n        alert_html = \"\"\n        for alert in alerts:\n            severity = alert.severity if alert.severity in VALID_SEVERITIES else \"info\"\n            alert_html += f\"<div class='alert alert-{severity}'>{escape(alert.message)}</div>\"\n        context[\"system_alerts\"] = mark_safe(alert_html)\n        return context",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {
+            "language": "python",
+            "patch_target": "app/views/admin_dashboard.py"
+          }
+        },
+        {
+          "type": "text",
+          "text": "Changes:\n- All user-controlled values wrapped in `escape()` before interpolation into the `mark_safe` HTML\n- `alert.severity` validated against an allowlist to prevent CSS class injection (e.g., `severity=\"danger' onclick='alert(1)\"` would break out of the class attribute)\n- `act.created_at` is a datetime object and safe to interpolate directly\n\nThat covers all 9 Bandit findings plus the additional issues I identified during review. Here's the final scorecard:\n\n| Bandit ID | File | Fix | Additional Issues Found |\n|-----------|------|-----|------------------------|\n| B105 | payment_gateway.py | Env vars | \u2014 |\n| B501 | payment_gateway.py | `verify=True` | Missing `raise_for_status()` |\n| B608 \u00d72 | user_repository.py | Parameterized queries | 5 more injectable methods beyond the 2 Bandit flagged |\n| B301 \u00d72 | session_store.py | JSON serialization | Migration path for existing pickle sessions |\n| B324 | token_manager.py | HMAC-SHA256 | Timing attack, improper HMAC construction |\n| B110 | token_manager.py | Specific except + logging | \u2014 |\n| B703 | admin_dashboard.py | `escape()` | CSS class injection in alert severity |\n\nBandit found 9 issues. Manual review found 8 more. The tool is a good first pass but it misses semantic vulnerabilities \u2014 you need both automated scanning and code review.",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        }
+      ],
+      "timestamp": "2026-03-31T08:19:42.000Z",
+      "input_tokens": 0,
+      "output_tokens": 7296,
+      "cumulative_tokens": 30201
+    },
+    {
+      "turn_id": 10,
+      "parent_turn_id": 9,
+      "role": "user",
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "This is exactly what I needed. A few follow-ups:\n\n1. For the token migration \u2014 I'll go with option 1 (force re-auth). Our session TTL is 1 hour and we deploy during low-traffic windows, so the impact is minimal.\n\n2. For the session store pickle fallback \u2014 should I set a calendar reminder to remove it, or can we just deploy the JSON-only version directly since the TTL is only 1 hour?\n\n3. I want to add Bandit to our CI pipeline so we catch these before they hit prod. What's the best way to configure it? We use GitHub Actions and I want it to fail the build on High severity findings but only warn on Medium/Low.\n\n4. Any other static analysis tools you'd recommend running alongside Bandit? We also have some JavaScript in the admin templates.",
+          "uri": null,
+          "mime_type": null,
+          "metadata": {}
+        }
+      ],
+      "timestamp": "2026-03-31T08:22:05.000Z",
+      "input_tokens": 768,
+      "output_tokens": 0,
+      "cumulative_tokens": 30969
+    }
+  ],
+  "replay": {
+    "prefix_group_id": "pg-bandit-sec-review-001",
+    "prefix_overlap_ratio": 0.72,
+    "reuse_distance_turns": 2,
+    "reuse_distance_seconds": 18,
+    "estimated_kv_bytes_peak": 247892000,
+    "branch_count": 1,
+    "idle_windows_ms": [
+      0,
+      2000,
+      6000,
+      4000
+    ],
+    "arrival_pattern": "steady_interactive"
+  },
+  "kv_pressure": {
+    "cold_start": true,
+    "warm_cache_hit_rate": 0.68,
+    "estimated_offload_bytes": 49578400,
+    "estimated_reload_bytes": 24789200,
+    "tier": "HBM",
+    "cache_expectation": "warm",
+    "eviction_risk_score": 0.18
+  },
+  "provenance": {
+    "generator_model": "claude-opus-4-6",
+    "generator_prompt_version": "v0.1.0",
+    "pipeline_version": "0.1.0"
+  }
+}
